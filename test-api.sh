@@ -1,0 +1,112 @@
+#!/bin/bash
+
+# Test script for Vibe Kanban Go API
+# Usage: ./test-api.sh [prompt] [working_dir]
+
+set -e
+
+# Configuration
+API_HOST="${API_HOST:-localhost:8080}"
+PROMPT="${1:-Create a simple hello.go file that prints 'Hello World'}"
+WORKING_DIR="${2:-/tmp/test-executor}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}=== Vibe Kanban Go API Test ===${NC}"
+echo ""
+echo "Configuration:"
+echo "  API Host: $API_HOST"
+echo "  Prompt: $PROMPT"
+echo "  Working Dir: $WORKING_DIR"
+echo ""
+
+# Check if working directory exists, create if not
+if [ ! -d "$WORKING_DIR" ]; then
+    echo -e "${YELLOW}Creating working directory: $WORKING_DIR${NC}"
+    mkdir -p "$WORKING_DIR"
+fi
+
+# Check if API is running
+echo -e "${YELLOW}Checking API health...${NC}"
+if ! curl -s --max-time 5 "http://$API_HOST/health" > /dev/null 2>&1; then
+    echo -e "${RED}Error: API is not running at http://$API_HOST${NC}"
+    echo "Please start the API server first:"
+    echo "  cd go-api && go run cmd/server/main.go"
+    exit 1
+fi
+echo -e "${GREEN}API is healthy!${NC}"
+echo ""
+
+# Execute request
+echo -e "${YELLOW}Sending execution request...${NC}"
+echo "  Prompt: $PROMPT"
+echo "  Executor: claude_code"
+echo ""
+
+RESPONSE=$(curl -s -X POST "http://$API_HOST/api/execute" \
+    -H "Content-Type: application/json" \
+    -d "{
+        \"prompt\": \"$PROMPT\",
+        \"executor\": \"claude_code\",
+        \"working_dir\": \"$WORKING_DIR\"
+    }")
+
+SESSION_ID=$(echo "$RESPONSE" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
+STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
+
+if [ -z "$SESSION_ID" ]; then
+    echo -e "${RED}Error: Failed to get session ID${NC}"
+    echo "Response: $RESPONSE"
+    exit 1
+fi
+
+echo -e "${GREEN}Execution started!${NC}"
+echo "  Session ID: $SESSION_ID"
+echo "  Status: $STATUS"
+echo ""
+
+# Monitor stream
+echo -e "${YELLOW}=== Streaming logs (Ctrl+C to stop) ===${NC}"
+echo ""
+
+# Use curl to stream and process SSE events
+curl -s -N "http://$API_HOST/api/execute/$SESSION_ID/stream" 2>/dev/null | while IFS= read -r line; do
+    # Parse SSE event format: "event: TYPE" followed by "data: JSON"
+    if [[ "$line" == event:* ]]; then
+        EVENT_TYPE=$(echo "$line" | sed 's/event: //')
+    elif [[ "$line" == data:* ]]; then
+        DATA=$(echo "$line" | sed 's/data: //')
+
+        case "$EVENT_TYPE" in
+            "stdout")
+                echo -e "${NC}[stdout] $DATA"
+                ;;
+            "stderr")
+                echo -e "${RED}[stderr] $DATA"
+                ;;
+            "error")
+                echo -e "${RED}[ERROR] $DATA"
+                ;;
+            "done")
+                echo ""
+                echo -e "${GREEN}=== Execution completed ===${NC}"
+                break
+                ;;
+            *)
+                echo -e "${NC}[$EVENT_TYPE] $DATA"
+                ;;
+        esac
+    fi
+done
+
+# Check if files were created
+echo ""
+echo -e "${YELLOW}=== Files in working directory ===${NC}"
+ls -la "$WORKING_DIR" 2>/dev/null || echo "(directory empty or not accessible)"
+
+echo ""
+echo -e "${GREEN}Test completed!${NC}"
