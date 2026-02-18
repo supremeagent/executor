@@ -64,39 +64,32 @@ func (h *Handler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Start executor in goroutine and collect logs when done
-	go func() {
-		ctx := context.Background()
-		startErr := exec.Start(ctx, req.Prompt, opts)
+	// Start executor
+	ctx := context.Background()
+	if err := exec.Start(ctx, req.Prompt, opts); err != nil {
+		exec.Close()
+		h.registry.RemoveSession(sessionID)
+		http.Error(w, fmt.Sprintf("failed to start executor: %v", err), http.StatusInternalServerError)
+		return
+	}
 
-		// Collect logs - the logs channel will be closed after Start returns
+	// Background goroutine to pipe logs to Manager
+	go func() {
+		defer func() {
+			exec.Close()
+			h.registry.RemoveSession(sessionID)
+		}()
+
 		logsChan := exec.Logs()
-		var logs []streaming.LogEntry
 		for logEntry := range logsChan {
-			logs = append(logs, streaming.LogEntry{
+			h.sseMgr.AppendLog(sessionID, streaming.LogEntry{
 				Type:    logEntry.Type,
 				Content: logEntry.Content,
 			})
-			// If we got "done", break immediately
 			if logEntry.Type == "done" {
 				break
 			}
 		}
-
-		// Store logs regardless of error
-		if startErr != nil {
-			logs = append(logs, streaming.LogEntry{
-				Type:    "error",
-				Content: startErr.Error(),
-			})
-		}
-
-		// Store logs for later retrieval
-		h.sseMgr.StoreLogs(sessionID, logs)
-
-		// Clean up - close will close the channels
-		exec.Close()
-		h.registry.RemoveSession(sessionID)
 	}()
 
 	// Return response
@@ -164,46 +157,75 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	sessionID := vars["session_id"]
 
-	// Check if session still running
-	_, running := h.registry.GetSession(sessionID)
-
-	// Get logs (whether from completed session or still running)
-	logs, found := h.sseMgr.GetSession(sessionID)
-
-	if !found && running {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-
-	// Send stored logs
+	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Try to get flusher for streaming, but continue without if not available
 	var flusher http.Flusher
 	if f, ok := w.(http.Flusher); ok {
 		flusher = f
 	}
 
+	// 1. Send historical logs
+	logs, _ := h.sseMgr.GetSession(sessionID)
 	for _, logEntry := range logs {
-		data, _ := json.Marshal(LogEvent{
-			Type:    logEntry.Type,
-			Content: logEntry.Content,
-		})
+		data, _ := json.Marshal(logEntry)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
-		if flusher != nil {
-			flusher.Flush()
-		}
-	}
-
-	if running {
-		// Still running, keep connection open
-		fmt.Fprintf(w, "event: running\ndata: {}\n\n")
-	} else {
-		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	}
 	if flusher != nil {
 		flusher.Flush()
+	}
+
+	// Check if session still running
+	_, running := h.registry.GetSession(sessionID)
+	if !running {
+		// Session finished, just send "done" if not already in historical logs
+		hasDone := false
+		for _, l := range logs {
+			if l.Type == "done" {
+				hasDone = true
+				break
+			}
+		}
+		if !hasDone {
+			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		return
+	}
+
+	// 2. Subscribe to new logs
+	newLogs, unsubscribe := h.sseMgr.Subscribe(sessionID)
+	defer unsubscribe()
+
+	// Keep connection open and pipe new logs
+	for {
+		select {
+		case logEntry, ok := <-newLogs:
+			if !ok {
+				// Subscription channel closed
+				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+				if flusher != nil {
+					flusher.Flush()
+				}
+				return
+			}
+
+			data, _ := json.Marshal(logEntry)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
+			if flusher != nil {
+				flusher.Flush()
+			}
+
+			if logEntry.Type == "done" {
+				return
+			}
+		case <-r.Context().Done():
+			// Client disconnected
+			return
+		}
 	}
 }

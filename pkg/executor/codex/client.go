@@ -7,32 +7,53 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strings"
 	"syscall"
 	"sync"
+	"time"
 
 	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
 )
 
 // Client implements the Executor interface for Codex
 type Client struct {
-	cmd            *exec.Cmd
-	stdin          io.WriteCloser
-	stdout         io.ReadCloser
+	cmd    *exec.Cmd
+	stdin  io.WriteCloser
+	stdout io.ReadCloser
 
-	logsChan       chan executor.Log
-	doneChan       chan struct{}
-	closeOnce      sync.Once
+	logsChan  chan executor.Log
+	doneChan  chan struct{}
+	closeOnce sync.Once
+	closed    bool
+	mu        sync.Mutex
 
 	conversationID string
-	autoApprove   bool
+	autoApprove    bool
+
+	pendingMu sync.Mutex
+	pending   map[int64]chan JSONRPCMessage
+
+	commandRun func(name string, arg ...string) *exec.Cmd
+	idCounter  int64
 }
 
 // NewClient creates a new Codex client
 func NewClient() *Client {
 	return &Client{
-		logsChan: make(chan executor.Log, 100),
-		doneChan: make(chan struct{}),
+		logsChan:   make(chan executor.Log, 100),
+		doneChan:   make(chan struct{}),
+		pending:    make(map[int64]chan JSONRPCMessage),
+		commandRun: exec.Command,
+		idCounter:  1,
 	}
+}
+
+func (c *Client) nextID() RequestID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.idCounter++
+	id := c.idCounter
+	return RequestID{Number: &id}
 }
 
 // Start starts the Codex executor with the given prompt
@@ -40,7 +61,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	// Build command for Codex app-server
 	args := []string{"-y", "@openai/codex@0.101.0", "app-server"}
 
-	cmd := exec.Command("npx", args...)
+	cmd := c.commandRun("npx", args...)
 	cmd.Dir = opts.WorkingDir
 
 	// Set up stdin/stdout
@@ -61,6 +82,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 
 	c.cmd = cmd
 	c.stdin = stdin
+	c.stdout = stdout
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -72,41 +94,49 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			c.logsChan <- executor.Log{Type: "stderr", Content: line}
+			c.sendLog(executor.Log{Type: "stderr", Content: line})
 		}
 	}()
 
 	// Determine auto-approve setting
 	c.autoApprove = opts.AskForApproval == "never" || opts.AskForApproval == ""
 
-	// Initialize the connection
-	if err := c.initialize(); err != nil {
-		syscall.Kill(c.cmd.Process.Pid, syscall.SIGKILL)
-		return fmt.Errorf("failed to initialize: %w", err)
-	}
-
-	// Start a new conversation
-	conversationID, err := c.newConversation(opts)
-	if err != nil {
-		syscall.Kill(c.cmd.Process.Pid, syscall.SIGKILL)
-		return fmt.Errorf("failed to create conversation: %w", err)
-	}
-	c.conversationID = conversationID
-
-	// Add conversation listener
-	if err := c.addListener(conversationID); err != nil {
-		syscall.Kill(c.cmd.Process.Pid, syscall.SIGKILL)
-		return fmt.Errorf("failed to add listener: %w", err)
-	}
-
 	// Start reading responses in background
 	go c.readLoop(ctx, stdout)
 
-	// Send the user message
-	if err := c.sendUserMessage(conversationID, prompt); err != nil {
-		syscall.Kill(c.cmd.Process.Pid, syscall.SIGKILL)
-		return fmt.Errorf("failed to send message: %w", err)
-	}
+	// Run initialization and starting in a goroutine
+	go func() {
+		sendError := func(msg string) {
+			c.sendLog(executor.Log{Type: "error", Content: msg})
+			c.Close()
+		}
+
+		// Initialize the connection
+		if err := c.initialize(); err != nil {
+			sendError(fmt.Sprintf("failed to initialize: %v", err))
+			return
+		}
+
+		// Start a new conversation
+		conversationID, err := c.newConversation(opts)
+		if err != nil {
+			sendError(fmt.Sprintf("failed to create conversation: %v", err))
+			return
+		}
+		c.conversationID = conversationID
+
+		// Add conversation listener
+		if err := c.addListener(conversationID); err != nil {
+			sendError(fmt.Sprintf("failed to add listener: %v", err))
+			return
+		}
+
+		// Send the user message
+		if err := c.sendUserMessage(conversationID, prompt); err != nil {
+			sendError(fmt.Sprintf("failed to send message: %v", err))
+			return
+		}
+	}()
 
 	return nil
 }
@@ -122,7 +152,7 @@ func (c *Client) initialize() error {
 
 	req := JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      ptrToRequestID(nextID()),
+		ID:      ptrToRequestID(c.nextID()),
 		Method:  "initialize",
 		Params:  mustJSON(params),
 	}
@@ -165,7 +195,7 @@ func (c *Client) newConversation(opts executor.Options) (string, error) {
 
 	req := JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      ptrToRequestID(nextID()),
+		ID:      ptrToRequestID(c.nextID()),
 		Method:  "newConversation",
 		Params:  mustJSON(params),
 	}
@@ -191,7 +221,7 @@ func (c *Client) addListener(conversationID string) error {
 
 	req := JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      ptrToRequestID(nextID()),
+		ID:      ptrToRequestID(c.nextID()),
 		Method:  "addConversationListener",
 		Params:  mustJSON(params),
 	}
@@ -210,7 +240,7 @@ func (c *Client) sendUserMessage(conversationID, content string) error {
 
 	req := JSONRPCMessage{
 		JSONRPC: "2.0",
-		ID:      ptrToRequestID(nextID()),
+		ID:      ptrToRequestID(c.nextID()),
 		Method:  "sendUserMessage",
 		Params:  mustJSON(params),
 	}
@@ -221,7 +251,9 @@ func (c *Client) sendUserMessage(conversationID, content string) error {
 
 // Interrupt interrupts the current execution
 func (c *Client) Interrupt() error {
-	// Codex doesn't have an explicit interrupt, we just close the connection
+	if c.cmd != nil && c.cmd.Process != nil {
+		return c.cmd.Process.Signal(syscall.SIGINT)
+	}
 	return nil
 }
 
@@ -249,20 +281,39 @@ func (c *Client) Done() <-chan struct{} {
 // Close closes the executor and releases resources
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		c.closed = true
 		close(c.logsChan)
 		close(c.doneChan)
+		c.mu.Unlock()
+
+		if c.cmd != nil && c.cmd.Process != nil {
+			c.cmd.Process.Kill()
+			c.cmd.Wait()
+		}
+
+		if c.stdin != nil {
+			c.stdin.Close()
+		}
+
+		c.pendingMu.Lock()
+		for _, ch := range c.pending {
+			close(ch)
+		}
+		c.pending = nil
+		c.pendingMu.Unlock()
 	})
 
-	if c.cmd != nil && c.cmd.Process != nil {
-		syscall.Kill(c.cmd.Process.Pid, syscall.SIGKILL)
-		c.cmd.Wait()
-	}
-
-	if c.stdin != nil {
-		c.stdin.Close()
-	}
-
 	return nil
+}
+
+func (c *Client) sendLog(log executor.Log) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.logsChan <- log
 }
 
 func (c *Client) sendJSON(v interface{}) error {
@@ -271,11 +322,19 @@ func (c *Client) sendJSON(v interface{}) error {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
 
+	c.pendingMu.Lock()
+	if c.stdin == nil {
+		c.pendingMu.Unlock()
+		return fmt.Errorf("stdin is nil")
+	}
 	_, err = c.stdin.Write(data)
 	if err != nil {
+		c.pendingMu.Unlock()
 		return fmt.Errorf("failed to write to stdin: %w", err)
 	}
 	_, err = c.stdin.Write([]byte("\n"))
+	c.pendingMu.Unlock()
+	
 	if err != nil {
 		return fmt.Errorf("failed to write newline to stdin: %w", err)
 	}
@@ -283,24 +342,55 @@ func (c *Client) sendJSON(v interface{}) error {
 	return nil
 }
 
-// pendingResponses holds pending request responses
-type pendingResponses map[int64]chan JSONRPCMessage
-
 func (c *Client) sendRequest(req JSONRPCMessage) (JSONRPCMessage, error) {
-	// For now, simplified - just send and read response
-	// In production, we'd need proper request/response matching
+	if req.ID == nil {
+		return JSONRPCMessage{}, fmt.Errorf("request ID is nil")
+	}
+
+	id := *req.ID.Number
+	ch := make(chan JSONRPCMessage, 1)
+
+	c.pendingMu.Lock()
+	if c.pending == nil {
+		c.pendingMu.Unlock()
+		return JSONRPCMessage{}, fmt.Errorf("client closed")
+	}
+	c.pending[id] = ch
+	c.pendingMu.Unlock()
+
+	defer func() {
+		c.pendingMu.Lock()
+		if c.pending != nil {
+			delete(c.pending, id)
+		}
+		c.pendingMu.Unlock()
+	}()
+
 	if err := c.sendJSON(req); err != nil {
 		return JSONRPCMessage{}, err
 	}
 
-	// The response will come through the read loop
-	// For now, we just return success
-	return JSONRPCMessage{}, nil
+	select {
+	case resp, ok := <-ch:
+		if !ok {
+			return JSONRPCMessage{}, fmt.Errorf("channel closed")
+		}
+		if resp.Error != nil {
+			return JSONRPCMessage{}, fmt.Errorf("RPC error: %s (code: %d)", resp.Error.Message, resp.Error.Code)
+		}
+		return resp, nil
+	case <-time.After(5 * time.Second):
+		return JSONRPCMessage{}, fmt.Errorf("timeout waiting for response")
+	}
+}
+
+func ctxDone(ctx context.Context) <-chan struct{} {
+	return ctx.Done()
 }
 
 func (c *Client) readLoop(ctx context.Context, stdout io.Reader) {
 	defer func() {
-		c.doneChan <- struct{}{}
+		c.Close()
 	}()
 
 	scanner := bufio.NewScanner(stdout)
@@ -310,19 +400,35 @@ func (c *Client) readLoop(ctx context.Context, stdout io.Reader) {
 			continue
 		}
 
-		// Log the raw message
-		c.logsChan <- executor.Log{Type: "stdout", Content: line}
-
-		// Try to parse as notification
+		// Try to parse as JSON-RPC message
 		var msg JSONRPCMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			c.sendLog(executor.Log{Type: "stdout", Content: line})
 			continue
 		}
 
+		// If it's a response, send to pending request
+		if msg.ID != nil && msg.ID.Number != nil {
+			id := *msg.ID.Number
+			c.pendingMu.Lock()
+			if ch, ok := c.pending[id]; ok {
+				ch <- msg
+			}
+			c.pendingMu.Unlock()
+		}
+
+		// Always log the message
+		c.sendLog(executor.Log{Type: "stdout", Content: line})
+
 		// Check for task completion
 		if msg.Method == "codex/event/task_complete" {
-			c.logsChan <- executor.Log{Type: "done", Content: line}
+			c.sendLog(executor.Log{Type: "done", Content: line})
 			return
+		}
+
+		// Check for other events
+		if strings.HasPrefix(msg.Method, "codex/event/") {
+			c.sendLog(executor.Log{Type: "event", Content: msg})
 		}
 	}
 }

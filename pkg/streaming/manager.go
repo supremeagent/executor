@@ -6,20 +6,22 @@ import (
 
 // LogEntry stores a log entry
 type LogEntry struct {
-	Type    string
-	Content interface{}
+	Type    string      `json:"type"`
+	Content interface{} `json:"content"`
 }
 
 // Manager manages SSE streams for executor sessions
 type Manager struct {
 	sessions    map[string][]LogEntry
+	subscribers map[string][]chan LogEntry
 	mu          sync.RWMutex
 }
 
 // NewManager creates a new SSE manager
 func NewManager() *Manager {
 	return &Manager{
-		sessions: make(map[string][]LogEntry),
+		sessions:    make(map[string][]LogEntry),
+		subscribers: make(map[string][]chan LogEntry),
 	}
 }
 
@@ -30,11 +32,46 @@ func (m *Manager) StoreLogs(sessionID string, logs []LogEntry) {
 	m.sessions[sessionID] = logs
 }
 
-// AppendLog appends a log entry to a session
+// AppendLog appends a log entry to a session and notifies subscribers
 func (m *Manager) AppendLog(sessionID string, log LogEntry) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.sessions[sessionID] = append(m.sessions[sessionID], log)
+	
+	// Notify subscribers
+	subs := m.subscribers[sessionID]
+	m.mu.Unlock()
+
+	for _, ch := range subs {
+		select {
+		case ch <- log:
+		default:
+			// Subscriber slow, skip or handle accordingly
+		}
+	}
+}
+
+// Subscribe subscribes to new logs for a session
+func (m *Manager) Subscribe(sessionID string) (<-chan LogEntry, func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	ch := make(chan LogEntry, 100)
+	m.subscribers[sessionID] = append(m.subscribers[sessionID], ch)
+
+	unsubscribe := func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		subs := m.subscribers[sessionID]
+		for i, sub := range subs {
+			if sub == ch {
+				m.subscribers[sessionID] = append(subs[:i], subs[i+1:]...)
+				close(ch)
+				break
+			}
+		}
+	}
+
+	return ch, unsubscribe
 }
 
 // GetSession returns stored logs for a session
@@ -46,9 +83,15 @@ func (m *Manager) GetSession(sessionID string) ([]LogEntry, bool) {
 	return logs, ok
 }
 
-// UnregisterSession unregisters a session
+// UnregisterSession unregisters a session and its subscribers
 func (m *Manager) UnregisterSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	
 	delete(m.sessions, sessionID)
+	
+	for _, ch := range m.subscribers[sessionID] {
+		close(ch)
+	}
+	delete(m.subscribers, sessionID)
 }

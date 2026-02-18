@@ -1,6 +1,10 @@
 package claude
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/google/uuid"
+)
 
 // PermissionMode represents the permission mode for Claude Code
 type PermissionMode string
@@ -160,6 +164,5 @@ func ControlErrorResponse(requestID string, err string) ControlResponse {
 }
 
 func newRequestID() string {
-	// Simple UUID generation - in production use google/uuid
-	return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx"
+	return uuid.New().String()
 }

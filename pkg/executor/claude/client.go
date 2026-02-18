@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,17 +15,21 @@ import (
 
 // Client implements the Executor interface for Claude Code
 type Client struct {
-	cmd       *exec.Cmd
-	logsChan  chan executor.Log
-	doneChan  chan struct{}
-	closeOnce sync.Once
+	cmd        *exec.Cmd
+	logsChan   chan executor.Log
+	doneChan   chan struct{}
+	closeOnce  sync.Once
+	closed     bool
+	mu         sync.Mutex
+	commandRun func(name string, arg ...string) *exec.Cmd
 }
 
 // NewClient creates a new Claude Code client
 func NewClient() *Client {
 	return &Client{
-		logsChan: make(chan executor.Log, 100),
-		doneChan: make(chan struct{}),
+		logsChan:   make(chan executor.Log, 100),
+		doneChan:   make(chan struct{}),
+		commandRun: exec.Command,
 	}
 }
 
@@ -45,8 +50,8 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 
 	// Prepare the input message
 	userMsg := struct {
-		Type  string `json:"type"`
-		User  struct {
+		Type string `json:"type"`
+		User struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"user"`
@@ -64,54 +69,65 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	msgBytes, _ := json.Marshal(userMsg)
 
 	// Create command
-	cmd := exec.Command("npx", args...)
+	cmd := c.commandRun("npx", args...)
 	cmd.Dir = opts.WorkingDir
 	// Unset CLAUDECODE env to allow running inside Claude Code session
 	cmd.Env = append(os.Environ(), "CLAUDECODE=")
 	// Pass the message via stdin
 	cmd.Stdin = strings.NewReader(string(msgBytes) + "\n")
 
-	// Run command and capture output
-	output, err := cmd.CombinedOutput()
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	cmd.Stderr = cmd.Stdout // Redirect stderr to stdout to capture everything
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start command: %w", err)
+	}
 
 	c.cmd = cmd
 
-	// Parse and send output line by line
-	lines := strings.Split(string(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
+	// Parse and send output line by line in background
+	go func() {
+		defer c.Close()
 
-		// Try to parse as JSON
-		var result struct {
-			Type    string `json:"type"`
-			Result  string `json:"result"`
-			IsError bool   `json:"is_error"`
-		}
-		if parseErr := json.Unmarshal([]byte(line), &result); parseErr == nil {
-			if result.Type == "result" {
-				if result.IsError {
-					c.logsChan <- executor.Log{Type: "error", Content: result.Result}
-				} else {
-					c.logsChan <- executor.Log{Type: "result", Content: result.Result}
-				}
-				// Send done - don't close here, let Close() handle it
-				c.logsChan <- executor.Log{Type: "done", Content: line}
-				return nil
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
 			}
+
+			// Try to parse as JSON
+			var result struct {
+				Type    string `json:"type"`
+				Result  string `json:"result"`
+				IsError bool   `json:"is_error"`
+			}
+			if parseErr := json.Unmarshal([]byte(line), &result); parseErr == nil {
+				if result.Type == "result" {
+					if result.IsError {
+						c.sendLog(executor.Log{Type: "error", Content: result.Result})
+					} else {
+						c.sendLog(executor.Log{Type: "result", Content: result.Result})
+					}
+					c.sendLog(executor.Log{Type: "done", Content: line})
+					return
+				}
+			}
+
+			// Send as stdout for any other output
+			c.sendLog(executor.Log{Type: "stdout", Content: line})
 		}
 
-		// Send as stdout for any other output
-		c.logsChan <- executor.Log{Type: "stdout", Content: line}
-	}
+		if err := cmd.Wait(); err != nil {
+			c.sendLog(executor.Log{Type: "error", Content: err.Error()})
+		}
 
-	if err != nil {
-		c.logsChan <- executor.Log{Type: "error", Content: err.Error()}
-	}
+		c.sendLog(executor.Log{Type: "done", Content: "Claude execution finished"})
+	}()
 
-	c.logsChan <- executor.Log{Type: "done", Content: string(output)}
 	return nil
 }
 
@@ -147,10 +163,26 @@ func (c *Client) Done() <-chan struct{} {
 // Close closes the executor and releases resources
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
+		c.mu.Lock()
+		c.closed = true
 		close(c.logsChan)
 		close(c.doneChan)
+		c.mu.Unlock()
+
+		if c.cmd != nil && c.cmd.Process != nil {
+			c.cmd.Process.Kill()
+		}
 	})
 	return nil
+}
+
+func (c *Client) sendLog(log executor.Log) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	c.logsChan <- log
 }
 
 // Factory creates Claude Code executor instances
