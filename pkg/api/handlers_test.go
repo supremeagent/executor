@@ -49,6 +49,35 @@ func TestHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("HandleExecute_WithEnv", func(t *testing.T) {
+		capture := &mockExecutor{
+			logs: make(chan executor.Log, 10),
+			done: make(chan struct{}),
+		}
+		registry.Register("capture_env", executor.FactoryFunc(func() (executor.Executor, error) {
+			return capture, nil
+		}))
+
+		reqBody, _ := json.Marshal(ExecuteRequest{
+			Prompt:   "hello",
+			Executor: "capture_env",
+			Env: map[string]string{
+				"OPENAI_API_KEY": "test-key",
+			},
+		})
+		req, _ := http.NewRequest("POST", "/execute", bytes.NewBuffer(reqBody))
+		rr := httptest.NewRecorder()
+
+		handler.HandleExecute(rr, req)
+
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rr.Code)
+		}
+		if capture.lastOpts.Env["OPENAI_API_KEY"] != "test-key" {
+			t.Fatalf("expected env to be passed into executor options")
+		}
+	})
+
 	t.Run("HandleContinue", func(t *testing.T) {
 		sessionID := "test-session-continue"
 		registry.CreateSession(sessionID, "claude_code", executor.Options{})
@@ -69,16 +98,16 @@ func TestHandlers(t *testing.T) {
 		sessionID := "test-session-stream"
 		// Append some historical logs
 		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "stdout", Content: "historical"})
-		
+
 		req, _ := http.NewRequest("GET", "/stream/"+sessionID, nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
-		
+
 		// Use a context with timeout to stop the streaming handler
 		ctx, cancel := context.WithCancel(context.Background())
 		req = req.WithContext(ctx)
-		
+
 		rr := httptest.NewRecorder()
-		
+
 		go func() {
 			// Wait a bit then cancel
 			time.Sleep(100 * time.Millisecond)
@@ -95,11 +124,11 @@ func TestHandlers(t *testing.T) {
 	t.Run("HandleStream_Unregister", func(t *testing.T) {
 		sessionID := "test-session-stream-unregister"
 		registry.CreateSession(sessionID, "claude_code", executor.Options{})
-		
+
 		req, _ := http.NewRequest("GET", "/stream/"+sessionID, nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
 		rr := httptest.NewRecorder()
-		
+
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			sseMgr.UnregisterSession(sessionID)
@@ -111,11 +140,11 @@ func TestHandlers(t *testing.T) {
 	t.Run("HandleStream_NewLog", func(t *testing.T) {
 		sessionID := "test-session-stream-newlog"
 		registry.CreateSession(sessionID, "claude_code", executor.Options{})
-		
+
 		req, _ := http.NewRequest("GET", "/stream/"+sessionID, nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
 		rr := httptest.NewRecorder()
-		
+
 		go func() {
 			time.Sleep(100 * time.Millisecond)
 			sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
@@ -188,23 +217,25 @@ func TestHandlers(t *testing.T) {
 }
 
 type mockExecutor struct {
-	logs chan executor.Log
-	done chan struct{}
+	logs     chan executor.Log
+	done     chan struct{}
+	lastOpts executor.Options
 }
 
 func (m *mockExecutor) Start(ctx context.Context, prompt string, opts executor.Options) error {
+	m.lastOpts = opts
 	select {
 	case m.logs <- executor.Log{Type: "done", Content: "done"}:
 	default:
 	}
 	return nil
 }
-func (m *mockExecutor) Interrupt() error                                             { return nil }
-func (m *mockExecutor) SendMessage(ctx context.Context, message string) error         { return nil }
-func (m *mockExecutor) Wait() error                                                  { return nil }
-func (m *mockExecutor) Logs() <-chan executor.Log                                     { return m.logs }
-func (m *mockExecutor) Done() <-chan struct{}                                        { return m.done }
-func (m *mockExecutor) Close() error                                                 { return nil }
+func (m *mockExecutor) Interrupt() error                                      { return nil }
+func (m *mockExecutor) SendMessage(ctx context.Context, message string) error { return nil }
+func (m *mockExecutor) Wait() error                                           { return nil }
+func (m *mockExecutor) Logs() <-chan executor.Log                             { return m.logs }
+func (m *mockExecutor) Done() <-chan struct{}                                 { return m.done }
+func (m *mockExecutor) Close() error                                          { return nil }
 
 type mockErrorExecutor struct {
 	mockExecutor

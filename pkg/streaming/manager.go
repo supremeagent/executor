@@ -1,6 +1,7 @@
 package streaming
 
 import (
+	"log"
 	"sync"
 )
 
@@ -33,19 +34,24 @@ func (m *Manager) StoreLogs(sessionID string, logs []LogEntry) {
 }
 
 // AppendLog appends a log entry to a session and notifies subscribers
-func (m *Manager) AppendLog(sessionID string, log LogEntry) {
+func (m *Manager) AppendLog(sessionID string, entry LogEntry) {
 	m.mu.Lock()
-	m.sessions[sessionID] = append(m.sessions[sessionID], log)
+	m.sessions[sessionID] = append(m.sessions[sessionID], entry)
 	
-	// Notify subscribers
-	subs := m.subscribers[sessionID]
+	// Copy subscribers to avoid holding lock during send
+	subs := make([]chan LogEntry, len(m.subscribers[sessionID]))
+	copy(subs, m.subscribers[sessionID])
 	m.mu.Unlock()
 
-	for _, ch := range subs {
+	log.Printf("[DEBUG] AppendLog: session=%s, type=%s, subscribers=%d", sessionID, entry.Type, len(subs))
+
+	// Notify all subscribers
+	for i, ch := range subs {
 		select {
-		case ch <- log:
+		case ch <- entry:
+			log.Printf("[DEBUG] AppendLog: sent to subscriber %d", i)
 		default:
-			// Subscriber slow, skip or handle accordingly
+			log.Printf("[DEBUG] AppendLog: subscriber %d channel full, skipped", i)
 		}
 	}
 }
@@ -57,6 +63,7 @@ func (m *Manager) Subscribe(sessionID string) (<-chan LogEntry, func()) {
 
 	ch := make(chan LogEntry, 100)
 	m.subscribers[sessionID] = append(m.subscribers[sessionID], ch)
+	log.Printf("[DEBUG] Subscribe: session=%s, total_subscribers=%d", sessionID, len(m.subscribers[sessionID]))
 
 	unsubscribe := func() {
 		m.mu.Lock()

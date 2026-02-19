@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"log"
 	"os/exec"
 	"strings"
 	"sync"
 
 	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
+	"github.com/creack/pty"
 )
 
 // Client implements the Executor interface for Claude Code
@@ -36,7 +37,8 @@ func NewClient() *Client {
 // Start starts the Claude Code executor with the given prompt
 func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options) error {
 	// Build command - use -p for non-interactive mode with JSON output
-	args := []string{"-y", "@anthropic-ai/claude-code@latest", "-p", "--output-format", "json"}
+	// -p takes the prompt directly as an argument
+	args := []string{"-y", "@anthropic-ai/claude-code@latest", "--print", prompt, "--output-format", "stream-json", "--verbose"}
 
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
@@ -48,42 +50,19 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	// Always skip permissions for API usage
 	args = append(args, "--dangerously-skip-permissions")
 
-	// Prepare the input message
-	userMsg := struct {
-		Type string `json:"type"`
-		User struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"user"`
-	}{
-		Type: "message",
-		User: struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}{
-			Role:    "user",
-			Content: prompt,
-		},
-	}
-
-	msgBytes, _ := json.Marshal(userMsg)
-
 	// Create command
 	cmd := c.commandRun("npx", args...)
 	cmd.Dir = opts.WorkingDir
-	// Unset CLAUDECODE env to allow running inside Claude Code session
-	cmd.Env = append(os.Environ(), "CLAUDECODE=")
-	// Pass the message via stdin
-	cmd.Stdin = strings.NewReader(string(msgBytes) + "\n")
+	// Unset CLAUDECODE env to allow running inside Claude Code session.
+	cmd.Env = executor.BuildCommandEnv(opts.Env, map[string]string{"CLAUDECODE": ""})
 
-	stdout, err := cmd.StdoutPipe()
+	// Log the command being executed (mask the prompt in logs for brevity)
+	c.sendLog(executor.Log{Type: "command", Content: fmt.Sprintf("npx %s, env: %s", strings.Join(args, " "), strings.Join(cmd.Env, " "))})
+
+	// Use PTY to get unbuffered output from Node.js
+	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		return fmt.Errorf("failed to create stdout pipe: %w", err)
-	}
-	cmd.Stderr = cmd.Stdout // Redirect stderr to stdout to capture everything
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start command: %w", err)
+		return fmt.Errorf("failed to start command with pty: %w", err)
 	}
 
 	c.cmd = cmd
@@ -91,8 +70,10 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	// Parse and send output line by line in background
 	go func() {
 		defer c.Close()
+		defer ptmx.Close()
 
-		scanner := bufio.NewScanner(stdout)
+		scanner := bufio.NewScanner(ptmx)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer for large JSON lines
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
@@ -176,13 +157,16 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) sendLog(log executor.Log) {
+func (c *Client) sendLog(entry executor.Log) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
+		log.Printf("[DEBUG] claude.sendLog: channel closed, skipping type=%s", entry.Type)
 		return
 	}
-	c.logsChan <- log
+	log.Printf("[DEBUG] claude.sendLog: sending type=%s", entry.Type)
+	c.logsChan <- entry
+	log.Printf("[DEBUG] claude.sendLog: sent type=%s", entry.Type)
 }
 
 // Factory creates Claude Code executor instances

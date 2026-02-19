@@ -1,14 +1,49 @@
 #!/bin/bash
 
 # Test script for Vibe Kanban Go API
-# Usage: ./test-api.sh [prompt] [working_dir]
+# Usage: ./test-api.sh [options]
+#   -p, --prompt      Prompt to execute (default: "Create a simple hello.go file that prints 'Hello World'")
+#   -d, --dir         Working directory (default: /tmp/test-executor)
+#   -e, --executor    Executor to use (default: claude_code)
+#   -h, --help        Show this help message
 
 set -e
 
-# Configuration
+# Default configuration
 API_HOST="${API_HOST:-localhost:8080}"
-PROMPT="${1:-Create a simple hello.go file that prints 'Hello World'}"
-WORKING_DIR="${2:-/tmp/test-executor}"
+PROMPT="Create a simple hello.go file that prints 'Hello World'"
+WORKING_DIR="/tmp/test-executor"
+EXECUTOR="claude_code"
+
+# Parse command line options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -p|--prompt)
+            PROMPT="$2"
+            shift 2
+            ;;
+        -d|--dir)
+            WORKING_DIR="$2"
+            shift 2
+            ;;
+        -e|--executor)
+            EXECUTOR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: ./test-api.sh [options]"
+            echo "  -p, --prompt      Prompt to execute"
+            echo "  -d, --dir         Working directory (default: /tmp/test-executor)"
+            echo "  -e, --executor    Executor to use (default: claude_code)"
+            echo "  -h, --help        Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # Colors
 RED='\033[0;31m'
@@ -22,6 +57,7 @@ echo "Configuration:"
 echo "  API Host: $API_HOST"
 echo "  Prompt: $PROMPT"
 echo "  Working Dir: $WORKING_DIR"
+echo "  Executor: $EXECUTOR"
 echo ""
 
 # Check if working directory exists, create if not
@@ -41,19 +77,36 @@ fi
 echo -e "${GREEN}API is healthy!${NC}"
 echo ""
 
+# Build env object from environment variables
+ENV_VARS=""
+for var in ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL ANTHROPIC_DEFAULT_HAIKU_MODEL ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_MODEL; do
+    val="${!var}"
+    if [ -n "$val" ]; then
+        if [ -n "$ENV_VARS" ]; then
+            ENV_VARS="$ENV_VARS,"
+        fi
+        ENV_VARS="$ENV_VARS\"$var\":\"$val\""
+    fi
+done
+
 # Execute request
 echo -e "${YELLOW}Sending execution request...${NC}"
 echo "  Prompt: $PROMPT"
-echo "  Executor: claude_code"
+echo "  Executor: $EXECUTOR"
+if [ -n "$ENV_VARS" ]; then
+    echo "  Env: {$ENV_VARS}"
+fi
 echo ""
+
+if [ -n "$ENV_VARS" ]; then
+    REQUEST_BODY="{\"prompt\": \"$PROMPT\", \"executor\": \"$EXECUTOR\", \"working_dir\": \"$WORKING_DIR\", \"env\": {$ENV_VARS}}"
+else
+    REQUEST_BODY="{\"prompt\": \"$PROMPT\", \"executor\": \"$EXECUTOR\", \"working_dir\": \"$WORKING_DIR\"}"
+fi
 
 RESPONSE=$(curl -s -X POST "http://$API_HOST/api/execute" \
     -H "Content-Type: application/json" \
-    -d "{
-        \"prompt\": \"$PROMPT\",
-        \"executor\": \"claude_code\",
-        \"working_dir\": \"$WORKING_DIR\"
-    }")
+    -d "$REQUEST_BODY")
 
 SESSION_ID=$(echo "$RESPONSE" | grep -o '"session_id":"[^"]*"' | cut -d'"' -f4)
 STATUS=$(echo "$RESPONSE" | grep -o '"status":"[^"]*"' | cut -d'"' -f4)
@@ -73,13 +126,17 @@ echo ""
 echo -e "${YELLOW}=== Streaming logs (Ctrl+C to stop) ===${NC}"
 echo ""
 
-# Use curl to stream and process SSE events
-curl -s -N "http://$API_HOST/api/execute/$SESSION_ID/stream" 2>/dev/null | while IFS= read -r line; do
+# Use curl to stream SSE events with unbuffered output
+# The sed processes line by line and outputs immediately
+exec 3< <(curl -s -N --no-buffer "http://$API_HOST/api/execute/$SESSION_ID/stream" 2>/dev/null)
+
+EVENT_TYPE=""
+while IFS= read -r line <&3; do
     # Parse SSE event format: "event: TYPE" followed by "data: JSON"
     if [[ "$line" == event:* ]]; then
-        EVENT_TYPE=$(echo "$line" | sed 's/event: //')
+        EVENT_TYPE="${line#event: }"
     elif [[ "$line" == data:* ]]; then
-        DATA=$(echo "$line" | sed 's/data: //')
+        DATA="${line#data: }"
 
         case "$EVENT_TYPE" in
             "stdout")
@@ -94,6 +151,7 @@ curl -s -N "http://$API_HOST/api/execute/$SESSION_ID/stream" 2>/dev/null | while
             "done")
                 echo ""
                 echo -e "${GREEN}=== Execution completed ===${NC}"
+                exec 3<&-
                 break
                 ;;
             *)

@@ -8,8 +8,8 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
@@ -63,6 +63,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 
 	cmd := c.commandRun("npx", args...)
 	cmd.Dir = opts.WorkingDir
+	cmd.Env = executor.BuildCommandEnv(opts.Env)
 
 	// Set up stdin/stdout
 	stdin, err := cmd.StdinPipe()
@@ -83,6 +84,9 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	c.cmd = cmd
 	c.stdin = stdin
 	c.stdout = stdout
+
+	// Log the command being executed
+	c.sendLog(executor.Log{Type: "command", Content: fmt.Sprintf("npx %s", strings.Join(args, " "))})
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -186,11 +190,11 @@ func (c *Client) newConversation(opts executor.Options) (string, error) {
 	}
 
 	params := NewConversationParams{
-		Model:               opts.Model,
-		Sandbox:             sandbox,
-		AskForApproval:     askForApproval,
+		Model:                opts.Model,
+		Sandbox:              sandbox,
+		AskForApproval:       askForApproval,
 		ModelReasoningEffort: opts.ModelReasoningEffort,
-		WorkingDirectory:   opts.WorkingDir,
+		WorkingDirectory:     opts.WorkingDir,
 	}
 
 	req := JSONRPCMessage{
@@ -334,7 +338,7 @@ func (c *Client) sendJSON(v interface{}) error {
 	}
 	_, err = c.stdin.Write([]byte("\n"))
 	c.pendingMu.Unlock()
-	
+
 	if err != nil {
 		return fmt.Errorf("failed to write newline to stdin: %w", err)
 	}

@@ -45,20 +45,21 @@ type Options struct {
 	WorkingDir string
 	Model      string
 	Plan       bool
+	Env        map[string]string
 
 	// Claude Code specific
-	Approvals                   bool
-	DangerouslySkipPermissions  bool
+	Approvals                  bool
+	DangerouslySkipPermissions bool
 
 	// Codex specific
-	Sandbox             string
-	AskForApproval     string
+	Sandbox              string
+	AskForApproval       string
 	ModelReasoningEffort string
 }
 
 // Log represents a log entry from the executor
 type Log struct {
-	Type    string      // "stdout", "stderr", "tool_use", "error", "done"
+	Type    string // "stdout", "stderr", "tool_use", "error", "done"
 	Content interface{}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
@@ -54,6 +55,7 @@ func (h *Handler) HandleExecute(w http.ResponseWriter, r *http.Request) {
 		Plan:                       req.Plan,
 		DangerouslySkipPermissions: !req.Plan,
 		Sandbox:                    req.Sandbox,
+		Env:                        req.Env,
 		AskForApproval:             req.AskForApproval,
 	}
 
@@ -154,31 +156,45 @@ func (h *Handler) HandleInterrupt(w http.ResponseWriter, r *http.Request) {
 
 // HandleStream handles the SSE stream endpoint
 func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		if err := recover(); err != nil {
+			log.Printf("[ERROR] HandleStream: panic recovered: %v", err)
+		}
+	}()
+
 	vars := mux.Vars(r)
 	sessionID := vars["session_id"]
 
+	log.Printf("[DEBUG] HandleStream: started for session=%s", sessionID)
+
 	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering if behind proxy
 
-	var flusher http.Flusher
-	if f, ok := w.(http.Flusher); ok {
-		flusher = f
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		log.Printf("[ERROR] HandleStream: flusher not supported")
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
 	}
 
-	// 1. Send historical logs
+	// 1. Subscribe FIRST to avoid race condition (missing logs between GetSession and Subscribe)
+	newLogs, unsubscribe := h.sseMgr.Subscribe(sessionID)
+	defer unsubscribe()
+
+	// 2. Send historical logs (now safe because we're already subscribed)
 	logs, _ := h.sseMgr.GetSession(sessionID)
 	for _, logEntry := range logs {
 		data, _ := json.Marshal(logEntry)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
 	}
-	if flusher != nil {
-		flusher.Flush()
-	}
+	flusher.Flush()
 
 	// Check if session still running
 	_, running := h.registry.GetSession(sessionID)
+	log.Printf("[DEBUG] HandleStream: session=%s, running=%v, historical_logs=%d", sessionID, running, len(logs))
 	if !running {
 		// Session finished, just send "done" if not already in historical logs
 		hasDone := false
@@ -188,42 +204,42 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+		log.Printf("[DEBUG] HandleStream: session not running, hasDone=%v", hasDone)
 		if !hasDone {
 			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-			if flusher != nil {
-				flusher.Flush()
-			}
+			flusher.Flush()
 		}
 		return
 	}
 
-	// 2. Subscribe to new logs
-	newLogs, unsubscribe := h.sseMgr.Subscribe(sessionID)
-	defer unsubscribe()
-
-	// Keep connection open and pipe new logs
+	// 3. Keep connection open and pipe new logs
+	// Note: Since we Subscribe BEFORE GetSession, historical logs were appended
+	// when there were no subscribers, so they won't appear in the channel.
+	// Only new logs after Subscribe will be sent to the channel.
+	log.Printf("[DEBUG] HandleStream: waiting for new logs")
 	for {
 		select {
 		case logEntry, ok := <-newLogs:
 			if !ok {
+				log.Printf("[DEBUG] HandleStream: channel closed")
 				// Subscription channel closed
 				fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-				if flusher != nil {
-					flusher.Flush()
-				}
+				flusher.Flush()
 				return
 			}
 
+			log.Printf("[DEBUG] HandleStream: received log type=%s", logEntry.Type)
+
 			data, _ := json.Marshal(logEntry)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
-			if flusher != nil {
-				flusher.Flush()
-			}
+			flusher.Flush()
+			log.Printf("[DEBUG] HandleStream: flushed log type=%s", logEntry.Type)
 
 			if logEntry.Type == "done" {
 				return
 			}
 		case <-r.Context().Done():
+			log.Printf("[DEBUG] HandleStream: client disconnected")
 			// Client disconnected
 			return
 		}

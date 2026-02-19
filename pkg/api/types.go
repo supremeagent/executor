@@ -2,13 +2,14 @@ package api
 
 // ExecuteRequest represents an execute API request
 type ExecuteRequest struct {
-	Prompt      string `json:"prompt"`
-	Executor    string `json:"executor"`
-	WorkingDir  string `json:"working_dir"`
-	Model       string `json:"model,omitempty"`
-	Plan        bool   `json:"plan,omitempty"`
-	Sandbox     string `json:"sandbox,omitempty"`
-	AskForApproval string `json:"ask_for_approval,omitempty"`
+	Prompt         string            `json:"prompt"`
+	Executor       string            `json:"executor"`
+	WorkingDir     string            `json:"working_dir"`
+	Model          string            `json:"model,omitempty"`
+	Plan           bool              `json:"plan,omitempty"`
+	Sandbox        string            `json:"sandbox,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	AskForApproval string            `json:"ask_for_approval,omitempty"`
 }
 
 // ExecuteResponse represents an execute API response
