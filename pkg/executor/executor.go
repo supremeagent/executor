@@ -60,7 +60,7 @@ type Options struct {
 // Log represents a log entry from the executor
 type Log struct {
 	Type    string // "stdout", "stderr", "tool_use", "error", "done"
-	Content interface{}
+	Content any
 }
 
 // Registry manages executor instances

@@ -168,6 +168,7 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	log.Debugf("HandleStream: started for session=%s", sessionID)
 	debugEnabled, _ := strconv.ParseBool(r.URL.Query().Get("debug"))
+	returnAll, _ := strconv.ParseBool(r.URL.Query().Get("return_all"))
 
 	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -186,27 +187,31 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	newLogs, unsubscribe := h.sseMgr.Subscribe(sessionID)
 	defer unsubscribe()
 
-	// 2. Send historical logs (now safe because we're already subscribed)
 	logs, _ := h.sseMgr.GetSession(sessionID)
-	for _, logEntry := range logs {
-		if logEntry.Type == "debug" && !debugEnabled {
-			continue
+	// 2. Optionally send historical logs (now safe because we're already subscribed)
+	if returnAll {
+		for _, logEntry := range logs {
+			if logEntry.Type == "debug" && !debugEnabled {
+				continue
+			}
+			data, _ := json.Marshal(logEntry)
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
 		}
-		data, _ := json.Marshal(logEntry)
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
+		flusher.Flush()
 	}
-	flusher.Flush()
 
 	// Check if session still running
 	_, running := h.registry.GetSession(sessionID)
-	log.Debugf("HandleStream: session=%s, running=%v, historical_logs=%d", sessionID, running, len(logs))
+	log.Debugf("HandleStream: session=%s, running=%v, historical_logs=%d, return_all=%v", sessionID, running, len(logs), returnAll)
 	if !running {
-		// Session finished, just send "done" if not already in historical logs
+		// Session finished, send "done" unless it was already sent in historical replay
 		hasDone := false
-		for _, l := range logs {
-			if l.Type == "done" {
-				hasDone = true
-				break
+		if returnAll {
+			for _, l := range logs {
+				if l.Type == "done" {
+					hasDone = true
+					break
+				}
 			}
 		}
 		log.Debugf("HandleStream: session not running, hasDone=%v", hasDone)

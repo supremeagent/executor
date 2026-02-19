@@ -179,7 +179,7 @@ func TestHandlers(t *testing.T) {
 		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "debug", Content: "visible-debug"})
 		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
 
-		req, _ := http.NewRequest("GET", "/stream/"+sessionID+"?debug=true", nil)
+		req, _ := http.NewRequest("GET", "/stream/"+sessionID+"?debug=true&return_all=true", nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
 		rr := httptest.NewRecorder()
 
@@ -188,6 +188,46 @@ func TestHandlers(t *testing.T) {
 		body := rr.Body.String()
 		if !strings.Contains(body, "event: debug") {
 			t.Fatalf("expected debug event when debug=true, got body: %s", body)
+		}
+	})
+
+	t.Run("HandleStream_NotReturnHistoryByDefault", func(t *testing.T) {
+		sessionID := "test-session-stream-no-history-default"
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "stdout", Content: "historical-stdout"})
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+
+		req, _ := http.NewRequest("GET", "/stream/"+sessionID, nil)
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+
+		handler.HandleStream(rr, req)
+
+		body := rr.Body.String()
+		if strings.Contains(body, "historical-stdout") {
+			t.Fatalf("expected historical logs to be excluded by default, got body: %s", body)
+		}
+		if !strings.Contains(body, "event: done") {
+			t.Fatalf("expected done event in response, got body: %s", body)
+		}
+	})
+
+	t.Run("HandleStream_ReturnHistoryWhenReturnAllEnabled", func(t *testing.T) {
+		sessionID := "test-session-stream-return-all"
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "stdout", Content: "historical-stdout"})
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+
+		req, _ := http.NewRequest("GET", "/stream/"+sessionID+"?return_all=true", nil)
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+
+		handler.HandleStream(rr, req)
+
+		body := rr.Body.String()
+		if !strings.Contains(body, "historical-stdout") {
+			t.Fatalf("expected historical logs when return_all=true, got body: %s", body)
+		}
+		if strings.Count(body, "event: done") != 1 {
+			t.Fatalf("expected done event exactly once, got body: %s", body)
 		}
 	})
 
