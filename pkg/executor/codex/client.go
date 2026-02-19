@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
+	"github.com/supremeagent/executor/pkg/executor"
 )
 
 // Client implements the Executor interface for Codex
@@ -148,10 +148,10 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 func (c *Client) initialize() error {
 	params := InitializeParams{
 		ClientInfo: ClientInfo{
-			Name:    "vibe-kanban-go-api",
+			Name:    "SupremeAgent",
 			Version: "1.0.0",
 		},
-		Capabilities:    map[string]interface{}{},
+		Capabilities:    map[string]any{},
 		ProtocolVersion: "2025-06-18",
 	}
 
@@ -171,7 +171,7 @@ func (c *Client) initialize() error {
 	notif := JSONRPCMessage{
 		JSONRPC: "2.0",
 		Method:  "initialized",
-		Params:  mustJSON(map[string]interface{}{}),
+		Params:  mustJSON(map[string]any{}),
 	}
 	if err := c.sendJSON(notif); err != nil {
 		return err
@@ -327,7 +327,7 @@ func (c *Client) sendLog(log executor.Log) {
 	c.logsChan <- log
 }
 
-func (c *Client) sendJSON(v interface{}) error {
+func (c *Client) sendJSON(v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
@@ -399,7 +399,7 @@ func ctxDone(ctx context.Context) <-chan struct{} {
 	return ctx.Done()
 }
 
-func (c *Client) readLoop(ctx context.Context, stdout io.Reader) {
+func (c *Client) readLoop(_ context.Context, stdout io.Reader) {
 	defer func() {
 		c.Close()
 	}()
@@ -462,7 +462,7 @@ func ptrToRequestID(id RequestID) *RequestID {
 	return &id
 }
 
-func mustJSON(v interface{}) json.RawMessage {
+func mustJSON(v any) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return data
 }

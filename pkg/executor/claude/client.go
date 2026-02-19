@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
 	"github.com/creack/pty"
 	"github.com/mylxsw/asteria/log"
+	"github.com/supremeagent/executor/pkg/executor"
 )
 
 // Client implements the Executor interface for Claude Code

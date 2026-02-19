@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
-	"github.com/anthropics/vibe-kanban/go-api/pkg/streaming"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/mylxsw/asteria/log"
+	"github.com/supremeagent/executor/pkg/executor"
+	"github.com/supremeagent/executor/pkg/streaming"
 )
 
 // Handler handles API requests

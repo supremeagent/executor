@@ -5,8 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
-	"github.com/anthropics/vibe-kanban/go-api/pkg/streaming"
+	"github.com/supremeagent/executor/pkg/executor"
+	"github.com/supremeagent/executor/pkg/streaming"
 )
 
 func TestMiddleware(t *testing.T) {

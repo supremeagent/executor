@@ -8,12 +8,12 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/api"
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor/claude"
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor/codex"
-	"github.com/anthropics/vibe-kanban/go-api/pkg/streaming"
 	"github.com/mylxsw/asteria/log"
+	"github.com/supremeagent/executor/pkg/api"
+	"github.com/supremeagent/executor/pkg/executor"
+	"github.com/supremeagent/executor/pkg/executor/claude"
+	"github.com/supremeagent/executor/pkg/executor/codex"
+	"github.com/supremeagent/executor/pkg/streaming"
 )
 
 func main() {

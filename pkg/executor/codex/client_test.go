@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
+	"github.com/supremeagent/executor/pkg/executor"
 )
 
 func TestCodexClient(t *testing.T) {
@@ -63,7 +63,7 @@ func TestCodexClient_More(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	
+
 	t.Run("Helpers", func(t *testing.T) {
 		client.nextID()
 		ptrToRequestID(nextID())

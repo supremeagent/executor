@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
+	"github.com/supremeagent/executor/pkg/executor"
 )
 
 func TestClaudeClient(t *testing.T) {

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
-	"github.com/anthropics/vibe-kanban/go-api/pkg/streaming"
 	"github.com/gorilla/mux"
+	"github.com/supremeagent/executor/pkg/executor"
+	"github.com/supremeagent/executor/pkg/streaming"
 )
 
 func TestHandlers(t *testing.T) {
