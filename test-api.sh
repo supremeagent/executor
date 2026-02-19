@@ -131,6 +131,8 @@ echo ""
 exec 3< <(curl -s -N --no-buffer "http://$API_HOST/api/execute/$SESSION_ID/stream" 2>/dev/null)
 
 EVENT_TYPE=""
+HAD_ERROR=0
+LAST_ERROR=""
 while IFS= read -r line <&3; do
     # Parse SSE event format: "event: TYPE" followed by "data: JSON"
     if [[ "$line" == event:* ]]; then
@@ -147,6 +149,10 @@ while IFS= read -r line <&3; do
                 ;;
             "error")
                 echo -e "${RED}[ERROR] $DATA"
+                HAD_ERROR=1
+                LAST_ERROR="$DATA"
+                exec 3<&-
+                break
                 ;;
             "done")
                 echo ""
@@ -160,6 +166,14 @@ while IFS= read -r line <&3; do
         esac
     fi
 done
+
+if [ "$HAD_ERROR" -eq 1 ]; then
+    echo ""
+    echo -e "${RED}=== Execution failed ===${NC}"
+    echo "  Session ID: $SESSION_ID"
+    echo "  Error: $LAST_ERROR"
+    exit 1
+fi
 
 # Check if files were created
 echo ""

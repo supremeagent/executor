@@ -59,7 +59,7 @@ func (c *Client) nextID() RequestID {
 // Start starts the Codex executor with the given prompt
 func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options) error {
 	// Build command for Codex app-server
-	args := []string{"-y", "@openai/codex@0.101.0", "app-server"}
+	args := []string{"-y", "@openai/codex@0.104.0", "app-server", "--listen", "stdio://"}
 
 	cmd := c.commandRun("npx", args...)
 	cmd.Dir = opts.WorkingDir
@@ -151,7 +151,8 @@ func (c *Client) initialize() error {
 			Name:    "vibe-kanban-go-api",
 			Version: "1.0.0",
 		},
-		Capabilities: nil,
+		Capabilities:    map[string]interface{}{},
+		ProtocolVersion: "2025-06-18",
 	}
 
 	req := JSONRPCMessage{
@@ -161,7 +162,8 @@ func (c *Client) initialize() error {
 		Params:  mustJSON(params),
 	}
 
-	if err := c.sendJSON(req); err != nil {
+	// Wait for initialize response before continuing
+	if _, err := c.sendRequest(req); err != nil {
 		return err
 	}
 
@@ -169,7 +171,7 @@ func (c *Client) initialize() error {
 	notif := JSONRPCMessage{
 		JSONRPC: "2.0",
 		Method:  "initialized",
-		Params:  nil,
+		Params:  mustJSON(map[string]interface{}{}),
 	}
 	if err := c.sendJSON(notif); err != nil {
 		return err
@@ -181,7 +183,7 @@ func (c *Client) initialize() error {
 func (c *Client) newConversation(opts executor.Options) (string, error) {
 	sandbox := opts.Sandbox
 	if sandbox == "" {
-		sandbox = "auto"
+		sandbox = "workspace-write"
 	}
 
 	askForApproval := opts.AskForApproval
@@ -238,7 +240,12 @@ func (c *Client) sendUserMessage(conversationID, content string) error {
 	params := SendUserMessageParams{
 		ConversationID: conversationID,
 		Items: []InputItem{
-			{Type: "text", Text: content},
+			{
+				Type: "text",
+				Data: InputItemData{
+					Text: content,
+				},
+			},
 		},
 	}
 
@@ -383,7 +390,7 @@ func (c *Client) sendRequest(req JSONRPCMessage) (JSONRPCMessage, error) {
 			return JSONRPCMessage{}, fmt.Errorf("RPC error: %s (code: %d)", resp.Error.Message, resp.Error.Code)
 		}
 		return resp, nil
-	case <-time.After(5 * time.Second):
+	case <-time.After(60 * time.Second):
 		return JSONRPCMessage{}, fmt.Errorf("timeout waiting for response")
 	}
 }
@@ -403,6 +410,8 @@ func (c *Client) readLoop(ctx context.Context, stdout io.Reader) {
 		if line == "" {
 			continue
 		}
+
+		c.sendLog(executor.Log{Type: "debug", Content: fmt.Sprintf("readLoop received: %s", line)})
 
 		// Try to parse as JSON-RPC message
 		var msg JSONRPCMessage

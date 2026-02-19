@@ -1,11 +1,48 @@
 package codex
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // RequestID represents a JSON-RPC request ID
 type RequestID struct {
 	Number *int64  `json:"number,omitempty"`
 	String *string `json:"string,omitempty"`
+}
+
+func (r RequestID) MarshalJSON() ([]byte, error) {
+	if r.Number != nil {
+		return json.Marshal(*r.Number)
+	}
+	if r.String != nil {
+		return json.Marshal(*r.String)
+	}
+	return []byte("null"), nil
+}
+
+func (r *RequestID) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		r.Number = nil
+		r.String = nil
+		return nil
+	}
+
+	var n int64
+	if err := json.Unmarshal(data, &n); err == nil {
+		r.Number = &n
+		r.String = nil
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		r.String = &s
+		r.Number = nil
+		return nil
+	}
+
+	return fmt.Errorf("invalid request id format: %s", string(data))
 }
 
 // JSONRPCMessage represents a JSON-RPC message
@@ -35,8 +72,9 @@ type ClientInfo struct {
 
 // InitializeParams represents initialize parameters
 type InitializeParams struct {
-	ClientInfo   ClientInfo `json:"client_info"`
-	Capabilities interface{} `json:"capabilities,omitempty"`
+	ClientInfo      ClientInfo  `json:"clientInfo"`
+	Capabilities    interface{} `json:"capabilities,omitempty"`
+	ProtocolVersion string      `json:"protocolVersion,omitempty"`
 }
 
 // InitializeResult represents initialize result
@@ -53,40 +91,44 @@ type InitializeResult struct {
 
 // NewConversationParams represents new conversation parameters
 type NewConversationParams struct {
-	Model               string                 `json:"model,omitempty"`
-	Sandbox             string                 `json:"sandbox,omitempty"`
-	AskForApproval     string                 `json:"ask_for_approval,omitempty"`
-	ModelReasoningEffort string                `json:"model_reasoning_effort,omitempty"`
-	WorkingDirectory   string                 `json:"working_directory,omitempty"`
+	Model                string `json:"model,omitempty"`
+	Sandbox              string `json:"sandbox,omitempty"`
+	AskForApproval       string `json:"askForApproval,omitempty"`
+	ModelReasoningEffort string `json:"modelReasoningEffort,omitempty"`
+	WorkingDirectory     string `json:"workingDirectory,omitempty"`
 }
 
 // NewConversationResult represents new conversation result
 type NewConversationResult struct {
-	ConversationID string `json:"conversation_id"`
+	ConversationID string `json:"conversationId"`
 }
 
 // ResumeConversationParams represents resume conversation parameters
 type ResumeConversationParams struct {
-	Path          string `json:"path,omitempty"`
-	ConversationID string `json:"conversation_id,omitempty"`
-	History       string `json:"history,omitempty"`
-	Overrides     *NewConversationParams `json:"overrides,omitempty"`
+	Path           string                 `json:"path,omitempty"`
+	ConversationID string                 `json:"conversationId,omitempty"`
+	History        string                 `json:"history,omitempty"`
+	Overrides      *NewConversationParams `json:"overrides,omitempty"`
 }
 
 // ResumeConversationResult represents resume conversation result
 type ResumeConversationResult struct {
-	ConversationID string `json:"conversation_id"`
+	ConversationID string `json:"conversationId"`
 }
 
 // SendUserMessageParams represents send user message parameters
 type SendUserMessageParams struct {
-	ConversationID string     `json:"conversation_id"`
+	ConversationID string      `json:"conversationId"`
 	Items          []InputItem `json:"items"`
 }
 
 // InputItem represents an input item
 type InputItem struct {
-	Type string `json:"type"`
+	Type string        `json:"type"`
+	Data InputItemData `json:"data"`
+}
+
+type InputItemData struct {
 	Text string `json:"text,omitempty"`
 }
 
@@ -97,13 +139,13 @@ type SendUserMessageResult struct {
 
 // AddConversationListenerParams represents add conversation listener parameters
 type AddConversationListenerParams struct {
-	ConversationID       string `json:"conversation_id"`
-	ExperimentalRawEvents bool  `json:"experimental_raw_events"`
+	ConversationID        string `json:"conversationId"`
+	ExperimentalRawEvents bool   `json:"experimentalRawEvents"`
 }
 
 // AddConversationListenerResult represents add conversation listener result
 type AddConversationListenerResult struct {
-	SubscriptionID string `json:"subscription_id"`
+	SubscriptionID string `json:"subscriptionId"`
 }
 
 // ServerNotification represents a server notification

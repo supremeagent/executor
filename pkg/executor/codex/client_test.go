@@ -118,13 +118,13 @@ func TestHelperProcessFull(t *testing.T) {
 
 	// Simulate JSON-RPC responses
 	// 1. Initialize response
-	fmt.Println(`{"jsonrpc":"2.0","id":{"number":2},"result":{}}`)
+	fmt.Println(`{"jsonrpc":"2.0","id":2,"result":{}}`)
 	// 2. NewConversation response
-	fmt.Println(`{"jsonrpc":"2.0","id":{"number":3},"result":{"conversation_id":"conv-123"}}`)
+	fmt.Println(`{"jsonrpc":"2.0","id":3,"result":{"conversationId":"conv-123"}}`)
 	// 3. AddListener response
-	fmt.Println(`{"jsonrpc":"2.0","id":{"number":4},"result":{}}`)
+	fmt.Println(`{"jsonrpc":"2.0","id":4,"result":{}}`)
 	// 4. SendUserMessage response
-	fmt.Println(`{"jsonrpc":"2.0","id":{"number":5},"result":{}}`)
+	fmt.Println(`{"jsonrpc":"2.0","id":5,"result":{}}`)
 	// 5. Task complete event
 	fmt.Println(`{"jsonrpc":"2.0","method":"codex/event/task_complete","params":{}}`)
 }
