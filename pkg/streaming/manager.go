@@ -1,8 +1,9 @@
 package streaming
 
 import (
-	"log"
 	"sync"
+
+	"github.com/mylxsw/asteria/log"
 )
 
 // LogEntry stores a log entry
@@ -43,15 +44,15 @@ func (m *Manager) AppendLog(sessionID string, entry LogEntry) {
 	copy(subs, m.subscribers[sessionID])
 	m.mu.Unlock()
 
-	log.Printf("[DEBUG] AppendLog: session=%s, type=%s, subscribers=%d", sessionID, entry.Type, len(subs))
+	log.Debugf("AppendLog: session=%s, type=%s, subscribers=%d", sessionID, entry.Type, len(subs))
 
 	// Notify all subscribers
 	for i, ch := range subs {
 		select {
 		case ch <- entry:
-			log.Printf("[DEBUG] AppendLog: sent to subscriber %d", i)
+			log.Debugf("AppendLog: sent to subscriber %d", i)
 		default:
-			log.Printf("[DEBUG] AppendLog: subscriber %d channel full, skipped", i)
+			log.Debugf("AppendLog: subscriber %d channel full, skipped", i)
 		}
 	}
 }
@@ -63,7 +64,7 @@ func (m *Manager) Subscribe(sessionID string) (<-chan LogEntry, func()) {
 
 	ch := make(chan LogEntry, 100)
 	m.subscribers[sessionID] = append(m.subscribers[sessionID], ch)
-	log.Printf("[DEBUG] Subscribe: session=%s, total_subscribers=%d", sessionID, len(m.subscribers[sessionID]))
+	log.Debugf("Subscribe: session=%s, total_subscribers=%d", sessionID, len(m.subscribers[sessionID]))
 
 	unsubscribe := func() {
 		m.mu.Lock()

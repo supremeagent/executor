@@ -1,9 +1,10 @@
 package api
 
 import (
-	"log"
 	"net/http"
 	"time"
+
+	"github.com/mylxsw/asteria/log"
 )
 
 // LoggingMiddleware logs HTTP requests
@@ -16,7 +17,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(wrapped, r)
 
-		log.Printf(
+		log.Debugf(
 			"%s %s %s %d %v",
 			r.RemoteAddr,
 			r.Method,
@@ -32,7 +33,7 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
-				log.Printf("panic recovered: %v", err)
+				log.Errorf("panic recovered: %v", err)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 			}
 		}()

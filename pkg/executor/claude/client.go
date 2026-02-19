@@ -5,13 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os/exec"
 	"strings"
 	"sync"
 
 	"github.com/anthropics/vibe-kanban/go-api/pkg/executor"
 	"github.com/creack/pty"
+	"github.com/mylxsw/asteria/log"
 )
 
 // Client implements the Executor interface for Claude Code
@@ -161,12 +161,12 @@ func (c *Client) sendLog(entry executor.Log) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		log.Printf("[DEBUG] claude.sendLog: channel closed, skipping type=%s", entry.Type)
+		log.Debugf("claude.sendLog: channel closed, skipping type=%s", entry.Type)
 		return
 	}
-	log.Printf("[DEBUG] claude.sendLog: sending type=%s", entry.Type)
+	log.Debugf("claude.sendLog: sending type=%s", entry.Type)
 	c.logsChan <- entry
-	log.Printf("[DEBUG] claude.sendLog: sent type=%s", entry.Type)
+	log.Debugf("claude.sendLog: sent type=%s", entry.Type)
 }
 
 // Factory creates Claude Code executor instances
