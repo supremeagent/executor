@@ -7,8 +7,8 @@ import (
 
 // LogEntry stores a log entry
 type LogEntry struct {
-	Type    string      `json:"type"`
-	Content interface{} `json:"content"`
+	Type    string `json:"type"`
+	Content any    `json:"content"`
 }
 
 // Manager manages SSE streams for executor sessions
@@ -37,7 +37,7 @@ func (m *Manager) StoreLogs(sessionID string, logs []LogEntry) {
 func (m *Manager) AppendLog(sessionID string, entry LogEntry) {
 	m.mu.Lock()
 	m.sessions[sessionID] = append(m.sessions[sessionID], entry)
-	
+
 	// Copy subscribers to avoid holding lock during send
 	subs := make([]chan LogEntry, len(m.subscribers[sessionID]))
 	copy(subs, m.subscribers[sessionID])
@@ -94,9 +94,9 @@ func (m *Manager) GetSession(sessionID string) ([]LogEntry, bool) {
 func (m *Manager) UnregisterSession(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	delete(m.sessions, sessionID)
-	
+
 	for _, ch := range m.subscribers[sessionID] {
 		close(ch)
 	}
