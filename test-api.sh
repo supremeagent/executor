@@ -60,6 +60,13 @@ echo "  Working Dir: $WORKING_DIR"
 echo "  Executor: $EXECUTOR"
 echo ""
 
+if command -v jq >/dev/null 2>&1; then
+    JQ_AVAILABLE=1
+else
+    JQ_AVAILABLE=0
+    echo -e "${YELLOW}Warning: jq not found, stream data will use raw output${NC}"
+fi
+
 # Check if working directory exists, create if not
 if [ ! -d "$WORKING_DIR" ]; then
     echo -e "${YELLOW}Creating working directory: $WORKING_DIR${NC}"
@@ -133,6 +140,29 @@ exec 3< <(curl -s -N --no-buffer "http://$API_HOST/api/execute/$SESSION_ID/strea
 EVENT_TYPE=""
 HAD_ERROR=0
 LAST_ERROR=""
+
+print_stream_data() {
+    local prefix="$1"
+    local data="$2"
+    local color="$3"
+    local parse_content_json="${4:-0}"
+
+    if [ "$JQ_AVAILABLE" -eq 1 ]; then
+        if echo "$data" | jq -e . >/dev/null 2>&1; then
+            echo -e "${color}${prefix}${NC}"
+            if [ "$parse_content_json" -eq 1 ]; then
+                echo "$data" | jq 'if (.content? and (.content | type == "string")) then .content |= (try fromjson catch .) else . end'
+            else
+                echo "$data" | jq .
+            fi
+        else
+            echo -e "${color}${prefix} $data${NC}"
+        fi
+    else
+        echo -e "${color}${prefix} $data${NC}"
+    fi
+}
+
 while IFS= read -r line <&3; do
     # Parse SSE event format: "event: TYPE" followed by "data: JSON"
     if [[ "$line" == event:* ]]; then
@@ -142,13 +172,13 @@ while IFS= read -r line <&3; do
 
         case "$EVENT_TYPE" in
             "stdout")
-                echo -e "${NC}[stdout] $DATA"
+                print_stream_data "[stdout]" "$DATA" "$NC" 1
                 ;;
             "stderr")
-                echo -e "${RED}[stderr] $DATA"
+                print_stream_data "[stderr]" "$DATA" "$RED"
                 ;;
             "error")
-                echo -e "${RED}[ERROR] $DATA"
+                print_stream_data "[ERROR]" "$DATA" "$RED"
                 HAD_ERROR=1
                 LAST_ERROR="$DATA"
                 exec 3<&-
@@ -161,7 +191,7 @@ while IFS= read -r line <&3; do
                 break
                 ;;
             *)
-                echo -e "${NC}[$EVENT_TYPE] $DATA"
+                print_stream_data "[$EVENT_TYPE]" "$DATA" "$NC"
                 ;;
         esac
     fi

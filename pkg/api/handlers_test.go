@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,43 @@ func TestHandlers(t *testing.T) {
 		}()
 
 		handler.HandleStream(rr, req)
+	})
+
+	t.Run("HandleStream_FilterDebugByDefault", func(t *testing.T) {
+		sessionID := "test-session-stream-debug-filtered"
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "debug", Content: "hidden-debug"})
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+
+		req, _ := http.NewRequest("GET", "/stream/"+sessionID, nil)
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+
+		handler.HandleStream(rr, req)
+
+		body := rr.Body.String()
+		if strings.Contains(body, "event: debug") {
+			t.Fatalf("expected debug event to be filtered by default, got body: %s", body)
+		}
+		if !strings.Contains(body, "event: done") {
+			t.Fatalf("expected done event in response, got body: %s", body)
+		}
+	})
+
+	t.Run("HandleStream_IncludeDebugWhenEnabled", func(t *testing.T) {
+		sessionID := "test-session-stream-debug-enabled"
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "debug", Content: "visible-debug"})
+		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+
+		req, _ := http.NewRequest("GET", "/stream/"+sessionID+"?debug=true", nil)
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+
+		handler.HandleStream(rr, req)
+
+		body := rr.Body.String()
+		if !strings.Contains(body, "event: debug") {
+			t.Fatalf("expected debug event when debug=true, got body: %s", body)
+		}
 	})
 
 	t.Run("HandleExecute_InvalidBody", func(t *testing.T) {

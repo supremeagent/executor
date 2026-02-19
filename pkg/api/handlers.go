@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -166,6 +167,7 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	sessionID := vars["session_id"]
 
 	log.Debugf("HandleStream: started for session=%s", sessionID)
+	debugEnabled, _ := strconv.ParseBool(r.URL.Query().Get("debug"))
 
 	// Set headers for SSE
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -187,6 +189,9 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// 2. Send historical logs (now safe because we're already subscribed)
 	logs, _ := h.sseMgr.GetSession(sessionID)
 	for _, logEntry := range logs {
+		if logEntry.Type == "debug" && !debugEnabled {
+			continue
+		}
 		data, _ := json.Marshal(logEntry)
 		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
 	}
@@ -229,6 +234,9 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 			}
 
 			log.Debugf("HandleStream: received log type=%s", logEntry.Type)
+			if logEntry.Type == "debug" && !debugEnabled {
+				continue
+			}
 
 			data, _ := json.Marshal(logEntry)
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", logEntry.Type, data)
