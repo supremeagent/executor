@@ -1,4 +1,7 @@
 run:
 	go run cmd/server/main.go
 
-.PHONY: run
+test:
+	go test -cover -v ./...
+
+.PHONY: run test

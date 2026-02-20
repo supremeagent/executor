@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"sync"
 )
 
 // Executor defines the interface for AI executor implementations
@@ -67,6 +68,7 @@ type Log struct {
 type Registry struct {
 	factories map[string]Factory
 	sessions  map[string]Executor
+	mu        sync.RWMutex
 }
 
 // NewRegistry creates a new executor registry
@@ -79,39 +81,58 @@ func NewRegistry() *Registry {
 
 // Register registers an executor factory
 func (r *Registry) Register(name string, factory Factory) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.factories[name] = factory
 }
 
 // CreateSession creates a new executor session
 func (r *Registry) CreateSession(id, executorType string, opts Options) (Executor, error) {
+	r.mu.RLock()
 	factory, ok := r.factories[executorType]
+	r.mu.RUnlock()
 	if !ok {
 		return nil, ErrUnknownExecutorType
 	}
 
-	executor, err := factory.Create()
+	exec, err := factory.Create()
 	if err != nil {
 		return nil, err
 	}
 
-	r.sessions[id] = executor
-	return executor, nil
+	r.mu.Lock()
+	r.sessions[id] = exec
+	r.mu.Unlock()
+
+	return exec, nil
 }
 
 // GetSession gets an executor session by ID
 func (r *Registry) GetSession(id string) (Executor, bool) {
-	executor, ok := r.sessions[id]
-	return executor, ok
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	exec, ok := r.sessions[id]
+	return exec, ok
 }
 
 // RemoveSession removes a session from the registry
 func (r *Registry) RemoveSession(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	delete(r.sessions, id)
 }
 
 // ShutdownAll shuts down all active sessions
 func (r *Registry) ShutdownAll() {
-	for _, executor := range r.sessions {
-		executor.Close()
+	r.mu.Lock()
+	sessions := make([]Executor, 0, len(r.sessions))
+	for id, ex := range r.sessions {
+		sessions = append(sessions, ex)
+		delete(r.sessions, id)
+	}
+	r.mu.Unlock()
+
+	for _, ex := range sessions {
+		_ = ex.Close()
 	}
 }

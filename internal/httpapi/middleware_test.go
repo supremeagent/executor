@@ -1,12 +1,11 @@
-package api
+package httpapi
 
 import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/supremeagent/executor/pkg/executor"
-	"github.com/supremeagent/executor/pkg/streaming"
+	"github.com/supremeagent/executor/pkg/sdk"
 )
 
 func TestMiddleware(t *testing.T) {
@@ -16,11 +15,11 @@ func TestMiddleware(t *testing.T) {
 
 	t.Run("LoggingMiddleware", func(t *testing.T) {
 		mw := LoggingMiddleware(handler)
-		req, _ := http.NewRequest("GET", "/", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/", nil)
 		rr := httptest.NewRecorder()
 		mw.ServeHTTP(rr, req)
 		if rr.Code != http.StatusOK {
-			t.Errorf("expected 200, got %d", rr.Code)
+			t.Fatalf("expected 200, got %d", rr.Code)
 		}
 	})
 
@@ -29,21 +28,18 @@ func TestMiddleware(t *testing.T) {
 			panic("test panic")
 		})
 		mw := RecoveryMiddleware(panicHandler)
-		req, _ := http.NewRequest("GET", "/", nil)
+		req, _ := http.NewRequest(http.MethodGet, "/", nil)
 		rr := httptest.NewRecorder()
 		mw.ServeHTTP(rr, req)
 		if rr.Code != http.StatusInternalServerError {
-			t.Errorf("expected 500, got %d", rr.Code)
+			t.Fatalf("expected 500, got %d", rr.Code)
 		}
 	})
 }
 
 func TestRouter(t *testing.T) {
-	registry := executor.NewRegistry()
-	sseMgr := streaming.NewManager()
-	handler := NewHandler(registry, sseMgr)
+	handler := NewHandler(sdk.New())
 	router := NewRouter(handler)
-
 	if router == nil {
 		t.Fatal("router should not be nil")
 	}
