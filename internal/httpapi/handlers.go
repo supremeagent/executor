@@ -128,3 +128,28 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
+	sessionID := mux.Vars(r)["session_id"]
+
+	afterSeq, err := strconv.ParseUint(r.URL.Query().Get("after_seq"), 10, 64)
+	if err != nil {
+		afterSeq = 0
+	}
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil {
+		limit = 0
+	}
+
+	events, err := h.client.ListEvents(r.Context(), sessionID, afterSeq, limit)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to list events: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"session_id": sessionID,
+		"events":     events,
+	})
+}

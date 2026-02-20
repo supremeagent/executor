@@ -400,9 +400,8 @@ func ctxDone(ctx context.Context) <-chan struct{} {
 }
 
 func (c *Client) readLoop(_ context.Context, stdout io.Reader) {
-	defer func() {
-		c.Close()
-	}()
+	defer c.Close()
+	defer c.sendLog(executor.Log{Type: "done", Content: "Codex execution finished"})
 
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
@@ -433,15 +432,14 @@ func (c *Client) readLoop(_ context.Context, stdout io.Reader) {
 		// Always log the message
 		c.sendLog(executor.Log{Type: "stdout", Content: line})
 
-		// Check for task completion
-		if msg.Method == "codex/event/task_complete" {
-			c.sendLog(executor.Log{Type: "done", Content: line})
-			return
-		}
-
 		// Check for other events
 		if strings.HasPrefix(msg.Method, "codex/event/") {
 			c.sendLog(executor.Log{Type: "event", Content: msg})
+		}
+
+		// Check for task completion
+		if msg.Method == "codex/event/task_complete" {
+			return
 		}
 	}
 }

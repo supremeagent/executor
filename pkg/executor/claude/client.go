@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/creack/pty"
-	"github.com/mylxsw/asteria/log"
 	"github.com/supremeagent/executor/pkg/executor"
 )
 
@@ -72,6 +71,8 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 		defer c.Close()
 		defer ptmx.Close()
 
+		defer c.sendLog(executor.Log{Type: "done", Content: "Claude execution finished"})
+
 		scanner := bufio.NewScanner(ptmx)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer for large JSON lines
 		for scanner.Scan() {
@@ -106,7 +107,6 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 			c.sendLog(executor.Log{Type: "error", Content: err.Error()})
 		}
 
-		c.sendLog(executor.Log{Type: "done", Content: "Claude execution finished"})
 	}()
 
 	return nil
@@ -161,12 +161,10 @@ func (c *Client) sendLog(entry executor.Log) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		log.Debugf("claude.sendLog: channel closed, skipping type=%s", entry.Type)
 		return
 	}
-	log.Debugf("claude.sendLog: sending type=%s", entry.Type)
+
 	c.logsChan <- entry
-	log.Debugf("claude.sendLog: sent type=%s", entry.Type)
 }
 
 // Factory creates Claude Code executor instances

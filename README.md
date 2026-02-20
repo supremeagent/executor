@@ -65,8 +65,34 @@ func main() {
 }
 ```
 
+## SDK with persistent store and hooks
+
+```go
+store := sdk.NewMemoryEventStoreWithExpiration(10 * time.Minute) // auto clean done sessions older than 10 minutes
+// or use sdk.NewMemoryEventStoreWithOptions(...) for more control
+
+client := sdk.NewWithOptions(sdk.ClientOptions{
+	EventStore: store,
+	Hooks: sdk.Hooks{
+		OnSessionStart: func(ctx context.Context, sessionID string, req sdk.ExecuteRequest) {
+			// optional callback
+		},
+		OnEventStored: func(ctx context.Context, evt sdk.Event) {
+			// evt has session_id, seq, timestamp, type, content
+		},
+		OnStoreError: func(ctx context.Context, sessionID string, evt sdk.Event, err error) {
+			// optional error callback
+		},
+	},
+})
+```
+
 ## HTTP API
 
 HTTP API is now implemented as a private package outside `pkg`:
 
 - `internal/httpapi`
+
+New API to fetch persisted events:
+
+- `GET /api/execute/{session_id}/events?after_seq=0&limit=100`

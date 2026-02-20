@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/mylxsw/asteria/log"
 	"github.com/supremeagent/executor/pkg/executor"
 	"github.com/supremeagent/executor/pkg/executor/claude"
 	"github.com/supremeagent/executor/pkg/executor/codex"
@@ -14,10 +15,24 @@ import (
 
 var ErrPromptRequired = errors.New("prompt is required")
 
+// ClientOptions configures SDK client behavior.
+type ClientOptions struct {
+	Registry      *executor.Registry
+	StreamManager *streaming.Manager
+	EventStore    EventStore
+	Hooks         Hooks
+}
+
 // Client is the SDK entry point for executing and managing tasks.
 type Client struct {
 	registry *executor.Registry
 	stream   *streaming.Manager
+	store    EventStore
+	hooks    Hooks
+}
+
+type storeCloser interface {
+	Close()
 }
 
 // New creates an SDK client with built-in executors registered.
@@ -26,19 +41,31 @@ func New() *Client {
 	registry.Register(string(ExecutorClaudeCode), claude.NewFactory())
 	registry.Register(string(ExecutorCodex), codex.NewFactory())
 
-	return NewWithRegistry(registry, streaming.NewManager())
+	return NewWithOptions(ClientOptions{
+		Registry:      registry,
+		StreamManager: streaming.NewManager(),
+		EventStore:    NewMemoryEventStore(),
+	})
 }
 
-// NewWithRegistry creates an SDK client using custom dependencies.
-func NewWithRegistry(registry *executor.Registry, streamMgr *streaming.Manager) *Client {
-	if registry == nil {
-		registry = executor.NewRegistry()
+// NewWithOptions creates an SDK client with custom dependencies.
+func NewWithOptions(opts ClientOptions) *Client {
+	if opts.Registry == nil {
+		opts.Registry = executor.NewRegistry()
 	}
-	if streamMgr == nil {
-		streamMgr = streaming.NewManager()
+	if opts.StreamManager == nil {
+		opts.StreamManager = streaming.NewManager()
+	}
+	if opts.EventStore == nil {
+		opts.EventStore = NewMemoryEventStore()
 	}
 
-	return &Client{registry: registry, stream: streamMgr}
+	return &Client{registry: opts.Registry, stream: opts.StreamManager, store: opts.EventStore, hooks: opts.Hooks}
+}
+
+// NewWithRegistry creates an SDK client using custom registry and stream manager.
+func NewWithRegistry(registry *executor.Registry, streamMgr *streaming.Manager) *Client {
+	return NewWithOptions(ClientOptions{Registry: registry, StreamManager: streamMgr})
 }
 
 // RegisterExecutor registers a custom executor type.
@@ -72,25 +99,45 @@ func (c *Client) Execute(ctx context.Context, req ExecuteRequest) (ExecuteRespon
 	}
 
 	if err := exec.Start(ctx, req.Prompt, opts); err != nil {
-		exec.Close()
+		_ = exec.Close()
 		c.registry.RemoveSession(sessionID)
 		return ExecuteResponse{}, err
 	}
 
-	go c.pipeSessionLogs(sessionID, exec)
+	if c.hooks.OnSessionStart != nil {
+		c.hooks.OnSessionStart(ctx, sessionID, req)
+	}
+
+	go c.pipeSessionLogs(sessionID, string(req.Executor), exec)
 
 	return ExecuteResponse{SessionID: sessionID, Status: "running"}, nil
 }
 
-func (c *Client) pipeSessionLogs(sessionID string, exec executor.Executor) {
+func (c *Client) pipeSessionLogs(sessionID, executorName string, exec executor.Executor) {
 	defer func() {
-		exec.Close()
+		_ = exec.Close()
 		c.registry.RemoveSession(sessionID)
+		if c.hooks.OnSessionEnd != nil {
+			c.hooks.OnSessionEnd(context.Background(), sessionID)
+		}
 	}()
 
 	for logEntry := range exec.Logs() {
-		c.stream.AppendLog(sessionID, streaming.LogEntry{Type: logEntry.Type, Content: logEntry.Content})
-		if logEntry.Type == "done" {
+		evt := Event{SessionID: sessionID, Executor: executorName, Type: logEntry.Type, Content: logEntry.Content}
+		storedEvt, err := c.store.Append(context.Background(), evt)
+		if err != nil {
+			if c.hooks.OnStoreError != nil {
+				c.hooks.OnStoreError(context.Background(), sessionID, evt, err)
+			}
+			log.Errorf("store append failed: session=%s type=%s err=%v", sessionID, logEntry.Type, err)
+			continue
+		}
+		if c.hooks.OnEventStored != nil {
+			c.hooks.OnEventStored(context.Background(), storedEvt)
+		}
+
+		c.stream.AppendLog(sessionID, streaming.LogEntry{Type: storedEvt.Type, Content: storedEvt})
+		if storedEvt.Type == "done" {
 			return
 		}
 	}
@@ -128,16 +175,19 @@ func (c *Client) SessionRunning(sessionID string) bool {
 	return ok
 }
 
+// ListEvents reads persisted session events.
+func (c *Client) ListEvents(ctx context.Context, sessionID string, afterSeq uint64, limit int) ([]Event, error) {
+	return c.store.List(ctx, sessionID, ListOptions{AfterSeq: afterSeq, Limit: limit})
+}
+
 // GetSessionEvents returns stored events for a session.
 func (c *Client) GetSessionEvents(sessionID string) ([]Event, bool) {
-	logs, ok := c.stream.GetSession(sessionID)
-	if !ok {
+	events, err := c.ListEvents(context.Background(), sessionID, 0, 0)
+	if err != nil {
 		return nil, false
 	}
-
-	events := make([]Event, len(logs))
-	for i := range logs {
-		events[i] = Event{Type: logs[i].Type, Content: logs[i].Content}
+	if len(events) == 0 && !c.SessionRunning(sessionID) {
+		return nil, false
 	}
 	return events, true
 }
@@ -146,43 +196,53 @@ func (c *Client) GetSessionEvents(sessionID string) ([]Event, bool) {
 func (c *Client) Subscribe(sessionID string, opts SubscribeOptions) (<-chan Event, func()) {
 	out := make(chan Event, 100)
 	newLogs, unsubscribeStream := c.stream.Subscribe(sessionID)
-	logs, _ := c.stream.GetSession(sessionID)
-	running := c.SessionRunning(sessionID)
-
 	stop := make(chan struct{})
 	stopOnce := sync.Once{}
-
-	emit := func(entry streaming.LogEntry) bool {
-		if entry.Type == "debug" && !opts.IncludeDebug {
-			return true
-		}
-		select {
-		case out <- Event{Type: entry.Type, Content: entry.Content}:
-			return true
-		case <-stop:
-			return false
-		}
-	}
 
 	go func() {
 		defer close(out)
 		defer unsubscribeStream()
 
-		hasDone := false
-		if opts.ReturnAll {
-			for _, entry := range logs {
-				if entry.Type == "done" {
-					hasDone = true
+		barrierSeq, _ := c.store.LatestSeq(context.Background(), sessionID)
+		lastEmittedSeq := opts.AfterSeq
+
+		emit := func(evt Event) bool {
+			if evt.Type == "debug" && !opts.IncludeDebug {
+				return true
+			}
+			select {
+			case out <- evt:
+				if evt.Seq > lastEmittedSeq {
+					lastEmittedSeq = evt.Seq
 				}
-				if !emit(entry) {
+				return true
+			case <-stop:
+				return false
+			}
+		}
+
+		if opts.ReturnAll {
+			history, err := c.store.List(context.Background(), sessionID, ListOptions{
+				AfterSeq: opts.AfterSeq,
+				UntilSeq: barrierSeq,
+				Limit:    opts.Limit,
+			})
+			if err != nil {
+				if c.hooks.OnStoreError != nil {
+					c.hooks.OnStoreError(context.Background(), sessionID, Event{SessionID: sessionID, Type: "history"}, err)
+				}
+				return
+			}
+			for _, evt := range history {
+				if !emit(evt) {
 					return
 				}
 			}
 		}
 
-		if !running {
-			if !hasDone {
-				_ = emit(streaming.LogEntry{Type: "done", Content: map[string]any{}})
+		if !c.SessionRunning(sessionID) {
+			if lastEmittedSeq == 0 {
+				_ = emit(Event{SessionID: sessionID, Type: "done", Content: map[string]any{}})
 			}
 			return
 		}
@@ -191,13 +251,21 @@ func (c *Client) Subscribe(sessionID string, opts SubscribeOptions) (<-chan Even
 			select {
 			case entry, ok := <-newLogs:
 				if !ok {
-					_ = emit(streaming.LogEntry{Type: "done", Content: map[string]any{}})
+					_ = emit(Event{SessionID: sessionID, Type: "done", Content: map[string]any{}})
 					return
 				}
-				if !emit(entry) {
+
+				evt, ok := entry.Content.(Event)
+				if !ok {
+					evt = Event{SessionID: sessionID, Type: entry.Type, Content: entry.Content}
+				}
+				if evt.Seq > 0 && evt.Seq <= lastEmittedSeq {
+					continue
+				}
+				if !emit(evt) {
 					return
 				}
-				if entry.Type == "done" {
+				if evt.Type == "done" {
 					return
 				}
 			case <-stop:
@@ -218,4 +286,7 @@ func (c *Client) Subscribe(sessionID string, opts SubscribeOptions) (<-chan Even
 // Shutdown closes all active sessions.
 func (c *Client) Shutdown() {
 	c.registry.ShutdownAll()
+	if closer, ok := c.store.(storeCloser); ok {
+		closer.Close()
+	}
 }

@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 func TestClientExecutePauseContinue(t *testing.T) {
 	registry := executor.NewRegistry()
 	streamMgr := streaming.NewManager()
-	client := NewWithRegistry(registry, streamMgr)
+	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streamMgr, EventStore: NewMemoryEventStore()})
 
 	mock := &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}
 	registry.Register("test", executor.FactoryFunc(func() (executor.Executor, error) { return mock, nil }))
@@ -38,14 +39,31 @@ func TestClientExecutePauseContinue(t *testing.T) {
 	}
 }
 
-func TestClientSubscribe(t *testing.T) {
-	client := NewWithRegistry(executor.NewRegistry(), streaming.NewManager())
-	sessionID := "s1"
+func TestClientSubscribeAndListFromStore(t *testing.T) {
+	registry := executor.NewRegistry()
+	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streaming.NewManager(), EventStore: NewMemoryEventStore()})
 
-	// Historical logs
-	client.stream.AppendLog(sessionID, streaming.LogEntry{Type: "stdout", Content: "history"})
-	client.stream.AppendLog(sessionID, streaming.LogEntry{Type: "debug", Content: "hidden"})
-	client.stream.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+	sessionID := "s1"
+	_, err := client.store.Append(context.Background(), Event{SessionID: sessionID, Type: "stdout", Content: "history"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.store.Append(context.Background(), Event{SessionID: sessionID, Type: "debug", Content: "hidden"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.store.Append(context.Background(), Event{SessionID: sessionID, Type: "done", Content: "done"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listed, err := client.ListEvents(context.Background(), sessionID, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 3 {
+		t.Fatalf("expected 3 listed events, got %d", len(listed))
+	}
 
 	ch, cancel := client.Subscribe(sessionID, SubscribeOptions{ReturnAll: true, IncludeDebug: false})
 	defer cancel()
@@ -59,6 +77,52 @@ func TestClientSubscribe(t *testing.T) {
 	}
 	if events[0].Type != "stdout" || events[1].Type != "done" {
 		t.Fatalf("unexpected event sequence: %#v", events)
+	}
+	if events[0].Seq == 0 {
+		t.Fatalf("expected persisted sequence number, got %#v", events[0])
+	}
+}
+
+func TestHooks(t *testing.T) {
+	registry := executor.NewRegistry()
+	mock := &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}
+	registry.Register("test", executor.FactoryFunc(func() (executor.Executor, error) { return mock, nil }))
+
+	var startCount int32
+	var eventCount int32
+	var endCount int32
+
+	client := NewWithOptions(ClientOptions{
+		Registry:      registry,
+		StreamManager: streaming.NewManager(),
+		EventStore:    NewMemoryEventStore(),
+		Hooks: Hooks{
+			OnSessionStart: func(ctx context.Context, sessionID string, req ExecuteRequest) {
+				atomic.AddInt32(&startCount, 1)
+			},
+			OnEventStored: func(ctx context.Context, evt Event) {
+				atomic.AddInt32(&eventCount, 1)
+			},
+			OnSessionEnd: func(ctx context.Context, sessionID string) {
+				atomic.AddInt32(&endCount, 1)
+			},
+		},
+	})
+
+	_, err := client.Execute(context.Background(), ExecuteRequest{Prompt: "hello", Executor: "test"})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if atomic.LoadInt32(&startCount) != 1 {
+		t.Fatalf("expected start hook to run once")
+	}
+	if atomic.LoadInt32(&eventCount) == 0 {
+		t.Fatalf("expected event hook to run")
+	}
+	if atomic.LoadInt32(&endCount) != 1 {
+		t.Fatalf("expected end hook to run once")
 	}
 }
 

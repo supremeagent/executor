@@ -20,7 +20,12 @@ import (
 func TestHandlers(t *testing.T) {
 	registry := executor.NewRegistry()
 	sseMgr := streaming.NewManager()
-	client := sdk.NewWithRegistry(registry, sseMgr)
+	store := sdk.NewMemoryEventStore()
+	client := sdk.NewWithOptions(sdk.ClientOptions{
+		Registry:      registry,
+		StreamManager: sseMgr,
+		EventStore:    store,
+	})
 	handler := NewHandler(client)
 
 	registry.Register(string(sdk.ExecutorClaudeCode), executor.FactoryFunc(func() (executor.Executor, error) {
@@ -88,10 +93,10 @@ func TestHandlers(t *testing.T) {
 		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "stdout", Content: "historical"})
 
 		req, _ := http.NewRequest(http.MethodGet, "/stream/"+sessionID, nil)
-		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
 
 		ctx, cancel := context.WithCancel(context.Background())
 		req = req.WithContext(ctx)
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
 		rr := httptest.NewRecorder()
 
 		go func() {
@@ -139,8 +144,8 @@ func TestHandlers(t *testing.T) {
 
 	t.Run("HandleStream_FilterDebugByDefault", func(t *testing.T) {
 		sessionID := "test-session-stream-debug-filtered"
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "debug", Content: "hidden-debug"})
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "debug", Content: "hidden-debug"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "done", Content: "done"})
 
 		req, _ := http.NewRequest(http.MethodGet, "/stream/"+sessionID+"?return_all=true", nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
@@ -159,8 +164,8 @@ func TestHandlers(t *testing.T) {
 
 	t.Run("HandleStream_IncludeDebugWhenEnabled", func(t *testing.T) {
 		sessionID := "test-session-stream-debug-enabled"
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "debug", Content: "visible-debug"})
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "debug", Content: "visible-debug"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "done", Content: "done"})
 
 		req, _ := http.NewRequest(http.MethodGet, "/stream/"+sessionID+"?debug=true&return_all=true", nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
@@ -175,8 +180,8 @@ func TestHandlers(t *testing.T) {
 
 	t.Run("HandleStream_NotReturnHistoryByDefault", func(t *testing.T) {
 		sessionID := "test-session-stream-no-history-default"
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "stdout", Content: "historical-stdout"})
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "stdout", Content: "historical-stdout"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "done", Content: "done"})
 
 		req, _ := http.NewRequest(http.MethodGet, "/stream/"+sessionID, nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
@@ -195,8 +200,8 @@ func TestHandlers(t *testing.T) {
 
 	t.Run("HandleStream_ReturnHistoryWhenReturnAllEnabled", func(t *testing.T) {
 		sessionID := "test-session-stream-return-all"
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "stdout", Content: "historical-stdout"})
-		sseMgr.AppendLog(sessionID, streaming.LogEntry{Type: "done", Content: "done"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "stdout", Content: "historical-stdout"})
+		_, _ = store.Append(context.Background(), sdk.Event{SessionID: sessionID, Type: "done", Content: "done"})
 
 		req, _ := http.NewRequest(http.MethodGet, "/stream/"+sessionID+"?return_all=true", nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
@@ -267,6 +272,36 @@ func TestHandlers(t *testing.T) {
 		handler.HandleInterrupt(rr, req)
 		if rr.Code != http.StatusInternalServerError {
 			t.Fatalf("expected 500, got %d", rr.Code)
+		}
+	})
+
+	t.Run("HandleEvents", func(t *testing.T) {
+		reqBody, _ := json.Marshal(ExecuteRequest{
+			Prompt:   "hello",
+			Executor: sdk.ExecutorClaudeCode,
+		})
+		reqExec, _ := http.NewRequest(http.MethodPost, "/execute", bytes.NewBuffer(reqBody))
+		rrExec := httptest.NewRecorder()
+		handler.HandleExecute(rrExec, reqExec)
+		if rrExec.Code != http.StatusOK {
+			t.Fatalf("expected execute 200, got %d", rrExec.Code)
+		}
+		var executeResp ExecuteResponse
+		_ = json.Unmarshal(rrExec.Body.Bytes(), &executeResp)
+		if executeResp.SessionID == "" {
+			t.Fatalf("expected session id")
+		}
+		time.Sleep(50 * time.Millisecond)
+
+		req, _ := http.NewRequest(http.MethodGet, "/events/"+executeResp.SessionID, nil)
+		req = mux.SetURLVars(req, map[string]string{"session_id": executeResp.SessionID})
+		rr := httptest.NewRecorder()
+		handler.HandleEvents(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		if !strings.Contains(rr.Body.String(), "\"events\"") {
+			t.Fatalf("expected events payload, got: %s", rr.Body.String())
 		}
 	})
 }

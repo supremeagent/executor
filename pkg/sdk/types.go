@@ -1,5 +1,7 @@
 package sdk
 
+import "time"
+
 type ExecutorType string
 
 // Built-in executor identifiers.
@@ -33,12 +35,18 @@ type ContinueRequest struct {
 
 // Event represents one streamed task event.
 type Event struct {
-	Type    string `json:"type"`
-	Content any    `json:"content"`
+	SessionID string    `json:"session_id,omitempty"`
+	Executor  string    `json:"executor,omitempty"`
+	Seq       uint64    `json:"seq,omitempty"`
+	Timestamp time.Time `json:"timestamp,omitempty"`
+	Type      string    `json:"type"`
+	Content   any       `json:"content"`
 }
 
 // SubscribeOptions configures event subscription behavior.
 type SubscribeOptions struct {
 	ReturnAll    bool
 	IncludeDebug bool
+	AfterSeq     uint64
+	Limit        int
 }
