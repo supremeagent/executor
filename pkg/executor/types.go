@@ -13,6 +13,10 @@ type ExecutorType string
 const (
 	ExecutorClaudeCode ExecutorType = "claude_code"
 	ExecutorCodex      ExecutorType = "codex"
+	ExecutorDroid      ExecutorType = "droid"
+	ExecutorGemini     ExecutorType = "gemini"
+	ExecutorQwen       ExecutorType = "qwen"
+	ExecutorCopilot    ExecutorType = "copilot"
 )
 
 // ExecuteRequest defines task startup options.

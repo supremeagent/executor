@@ -63,6 +63,23 @@ type Options struct {
 	Sandbox              string
 	AskForApproval       string
 	ModelReasoningEffort string
+
+	// Shared: skip all permission/approval prompts and run autonomously.
+	// Used by Gemini (--yolo), Qwen (--yolo), Droid (--skip-permissions-unsafe).
+	Yolo bool
+
+	// Droid specific: autonomy level (normal, low, medium, high, skip-permissions-unsafe).
+	// When empty, Droid defaults to skip-permissions-unsafe if Yolo is true.
+	DroidAutonomy string
+
+	// Droid specific: reasoning effort (none, dynamic, off, low, medium, high).
+	DroidReasoningEffort string
+
+	// Copilot specific: allow all tools without prompting.
+	CopilotAllowAllTools bool
+
+	// Gemini / Qwen / Copilot: extra CLI args forwarded verbatim to the subprocess.
+	ExtraArgs []string
 }
 
 // Log represents a log entry from the executor
