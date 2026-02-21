@@ -1,5 +1,6 @@
 import type {
   ApiSessionItem,
+  ControlResponseRequest,
   ContinueRequest,
   EventItem,
   ExecuteRequest,
@@ -46,6 +47,13 @@ export function continueTask(sessionId: string, payload: ContinueRequest) {
 export function interruptTask(sessionId: string) {
   return request<{ status: string }>(`${BASE}/execute/${sessionId}/interrupt`, {
     method: 'POST',
+  })
+}
+
+export function respondControl(sessionId: string, payload: ControlResponseRequest) {
+  return request<{ status: string }>(`${BASE}/execute/${sessionId}/control`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 

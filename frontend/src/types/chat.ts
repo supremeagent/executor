@@ -15,13 +15,31 @@ export interface ContinueRequest {
   message: string
 }
 
+export interface ControlResponseRequest {
+  request_id: string
+  decision: 'approve' | 'deny'
+  reason?: string
+}
+
+export interface UnifiedEventContent {
+  source: string
+  source_type: string
+  category: string
+  phase?: string
+  text?: string
+  tool_name?: string
+  request_id?: string
+  status?: string
+  raw?: unknown
+}
+
 export interface EventItem {
   session_id?: string
   executor?: string
   seq?: number
   timestamp?: string
   type: string
-  content: unknown
+  content: unknown | UnifiedEventContent
 }
 
 export interface ApiSessionItem {

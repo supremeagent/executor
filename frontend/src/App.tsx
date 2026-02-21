@@ -24,8 +24,9 @@ import {
   interruptTask,
   listEvents,
   listSessions,
+  respondControl,
 } from "@/lib/api";
-import type { EventItem, ExecutorType, SessionItem } from "@/types/chat";
+import type { EventItem, ExecutorType, SessionItem, UnifiedEventContent } from "@/types/chat";
 
 function summarizeContent(content: unknown): string {
   if (typeof content === "string") return content;
@@ -35,6 +36,13 @@ function summarizeContent(content: unknown): string {
   } catch {
     return String(content);
   }
+}
+
+function toUnifiedContent(content: unknown): UnifiedEventContent | null {
+  if (content && typeof content === "object" && "category" in (content as Record<string, unknown>)) {
+    return content as UnifiedEventContent;
+  }
+  return null;
 }
 
 function formatTime(v: string): string {
@@ -206,10 +214,6 @@ export default function App() {
 
   async function handleFollowup() {
     if (!selectedSession) return;
-    if (selectedSession.status !== "running") {
-      setError("当前会话已结束，无法继续对话，请新建会话。");
-      return;
-    }
     const text = followup.trim();
     if (!text) return;
 
@@ -232,22 +236,20 @@ export default function App() {
       attachStream(selectedSession.id);
     } catch (e) {
       const message = e instanceof Error ? e.message : "追加问题失败";
-      if (message.includes("session not found")) {
-        setSessions((prev) =>
-          prev.map((item) =>
-            item.id === selectedSession.id
-              ? {
-                  ...item,
-                  status: "done",
-                  updatedAt: new Date().toISOString(),
-                }
-              : item,
-          ),
-        );
-        setError("当前会话已结束，无法继续对话，请新建会话。");
-      } else {
-        setError(message);
-      }
+      setError(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleControlDecision(requestId: string, decision: "approve" | "deny") {
+    if (!selectedSession) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await respondControl(selectedSession.id, { request_id: requestId, decision });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "审批操作失败");
     } finally {
       setBusy(false);
     }
@@ -394,7 +396,6 @@ export default function App() {
                   onClick={() => void handleFollowup()}
                   disabled={
                     !selectedSession ||
-                    selectedSession.status !== "running" ||
                     !followup.trim() ||
                     busy
                   }
@@ -440,7 +441,42 @@ export default function App() {
                             : "streaming..."}
                         </small>
                       </header>
+                      {(() => {
+                        const content = toUnifiedContent(event.content);
+                        if (!content) return null;
+                        return (
+                          <div style={{ marginBottom: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <Badge>{content.category}</Badge>
+                            {content.phase ? <Badge>{content.phase}</Badge> : null}
+                            {content.tool_name ? <Badge>{content.tool_name}</Badge> : null}
+                          </div>
+                        );
+                      })()}
                       <pre>{summarizeContent(event.content)}</pre>
+                      {(() => {
+                        const content = toUnifiedContent(event.content);
+                        if (!content || content.category !== "approval" || !content.request_id) return null;
+                        return (
+                          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={busy}
+                              onClick={() => void handleControlDecision(content.request_id!, "approve")}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={busy}
+                              onClick={() => void handleControlDecision(content.request_id!, "deny")}
+                            >
+                              Deny
+                            </Button>
+                          </div>
+                        );
+                      })()}
                     </article>
                   ))
                 )}

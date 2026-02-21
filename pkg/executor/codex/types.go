@@ -101,6 +101,7 @@ type NewConversationParams struct {
 // NewConversationResult represents new conversation result
 type NewConversationResult struct {
 	ConversationID string `json:"conversationId"`
+	RolloutPath    string `json:"rolloutPath,omitempty"`
 }
 
 // ResumeConversationParams represents resume conversation parameters
@@ -114,6 +115,7 @@ type ResumeConversationParams struct {
 // ResumeConversationResult represents resume conversation result
 type ResumeConversationResult struct {
 	ConversationID string `json:"conversationId"`
+	RolloutPath    string `json:"rolloutPath,omitempty"`
 }
 
 // SendUserMessageParams represents send user message parameters

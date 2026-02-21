@@ -56,6 +56,8 @@ func (h *Handler) HandleContinue(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		if errors.Is(err, executor.ErrSessionNotFound) {
 			status = http.StatusNotFound
+		} else if errors.Is(err, sdk.ErrResumeUnavailable) {
+			status = http.StatusConflict
 		}
 		http.Error(w, fmt.Sprintf("failed to continue: %v", err), status)
 		return
@@ -79,6 +81,35 @@ func (h *Handler) HandleInterrupt(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "interrupted"})
+}
+
+func (h *Handler) HandleControl(w http.ResponseWriter, r *http.Request) {
+	sessionID := mux.Vars(r)["session_id"]
+	var req ControlResponse
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid request body: %v", err), http.StatusBadRequest)
+		return
+	}
+	if req.RequestID == "" {
+		http.Error(w, "request_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.Decision != executor.ControlDecisionApprove && req.Decision != executor.ControlDecisionDeny {
+		http.Error(w, "decision must be approve or deny", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.client.RespondControl(r.Context(), sessionID, req); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, executor.ErrSessionNotFound) {
+			status = http.StatusNotFound
+		}
+		http.Error(w, fmt.Sprintf("failed to respond control request: %v", err), status)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {

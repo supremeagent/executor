@@ -16,6 +16,9 @@ type Executor interface {
 	// SendMessage sends a message to continue the conversation
 	SendMessage(ctx context.Context, message string) error
 
+	// RespondControl sends a response to a pending control/approval request.
+	RespondControl(ctx context.Context, response ControlResponse) error
+
 	// Wait waits for the execution to complete
 	Wait() error
 
@@ -47,6 +50,10 @@ type Options struct {
 	Model      string
 	Plan       bool
 	Env        map[string]string
+	// ResumeSessionID identifies the upstream executor session/conversation to resume.
+	ResumeSessionID string
+	// ResumePath is optional executor specific resume source path (for example Codex rollout file).
+	ResumePath string
 
 	// Claude Code specific
 	Approvals                  bool

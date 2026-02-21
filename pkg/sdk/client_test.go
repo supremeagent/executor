@@ -2,6 +2,7 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -255,11 +256,192 @@ func TestCustomTransformer_OverridesDefault(t *testing.T) {
 	}
 }
 
+func TestContinueTask_ResumeFromStoredRuntime(t *testing.T) {
+	registry := executor.NewRegistry()
+	streamMgr := streaming.NewManager()
+	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streamMgr, EventStore: store.NewMemoryEventStore()})
+
+	re := &resumeExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}
+	registry.Register(string(executor.ExecutorCodex), executor.FactoryFunc(func() (executor.Executor, error) {
+		return re, nil
+	}))
+
+	sessionID := "resume-session"
+	client.requests[sessionID] = executor.ExecuteRequest{
+		Executor:   executor.ExecutorCodex,
+		WorkingDir: ".",
+	}
+	client.resumeInfo[sessionID] = sessionResumeInfo{CodexConversation: "conv-123"}
+
+	if err := client.ContinueTask(context.Background(), sessionID, "resume me"); err != nil {
+		t.Fatalf("continue failed: %v", err)
+	}
+	if re.startPrompt != "resume me" {
+		t.Fatalf("expected resume message as prompt, got %q", re.startPrompt)
+	}
+	if re.startOpts.ResumeSessionID != "conv-123" {
+		t.Fatalf("expected resume session id, got %+v", re.startOpts)
+	}
+}
+
+func TestContinueTask_ResumeUnavailable(t *testing.T) {
+	registry := executor.NewRegistry()
+	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streaming.NewManager(), EventStore: store.NewMemoryEventStore()})
+	sessionID := "resume-unavailable"
+	client.requests[sessionID] = executor.ExecuteRequest{
+		Executor: executor.ExecutorClaudeCode,
+	}
+
+	err := client.ContinueTask(context.Background(), sessionID, "resume")
+	if err != ErrResumeUnavailable {
+		t.Fatalf("expected ErrResumeUnavailable, got %v", err)
+	}
+}
+
+func TestCaptureResumeState(t *testing.T) {
+	client := NewWithOptions(ClientOptions{
+		Registry:      executor.NewRegistry(),
+		StreamManager: streaming.NewManager(),
+		EventStore:    store.NewMemoryEventStore(),
+	})
+
+	client.captureResumeState("s1", string(executor.ExecutorClaudeCode), executor.Log{
+		Type:    "stdout",
+		Content: `{"type":"result","session_id":"claude-sid-1","result":"ok"}`,
+	})
+	if client.resumeInfo["s1"].ClaudeSessionID != "claude-sid-1" {
+		t.Fatalf("expected claude session id captured, got %+v", client.resumeInfo["s1"])
+	}
+
+	client.captureResumeState("s2", string(executor.ExecutorCodex), executor.Log{
+		Type:    "output",
+		Content: `{"id":3,"result":{"conversationId":"conv-1","rolloutPath":"/tmp/rollout.jsonl"}}`,
+	})
+	if client.resumeInfo["s2"].CodexConversation != "conv-1" {
+		t.Fatalf("expected codex conversation captured, got %+v", client.resumeInfo["s2"])
+	}
+	if client.resumeInfo["s2"].CodexRolloutPath != "/tmp/rollout.jsonl" {
+		t.Fatalf("expected codex rollout path captured, got %+v", client.resumeInfo["s2"])
+	}
+}
+
+func TestDecodeJSONObjectHelpers(t *testing.T) {
+	obj, ok := decodeJSONObject(map[string]any{"k": "v"})
+	if !ok || obj["k"] != "v" {
+		t.Fatalf("decode map failed: %#v", obj)
+	}
+
+	raw := json.RawMessage(`{"n":1}`)
+	obj, ok = decodeJSONObject(raw)
+	if !ok || obj["n"].(float64) != 1 {
+		t.Fatalf("decode raw failed: %#v", obj)
+	}
+
+	obj, ok = decodeJSONObjectFromLine("prefix {\"a\":\"b\"}")
+	if !ok || obj["a"] != "b" {
+		t.Fatalf("decode from line failed: %#v", obj)
+	}
+}
+
+func TestSetAndGetSessionRuntime(t *testing.T) {
+	client := NewWithOptions(ClientOptions{
+		Registry:      executor.NewRegistry(),
+		StreamManager: streaming.NewManager(),
+		EventStore:    store.NewMemoryEventStore(),
+	})
+
+	req := executor.ExecuteRequest{Prompt: "hello", Executor: executor.ExecutorCodex}
+	client.setSessionRequest("sid", req)
+	client.resumeInfo["sid"] = sessionResumeInfo{CodexConversation: "conv-x"}
+
+	gotReq, gotResume, ok := client.getSessionRuntime("sid")
+	if !ok {
+		t.Fatalf("expected session runtime found")
+	}
+	if gotReq.Executor != executor.ExecutorCodex || gotResume.CodexConversation != "conv-x" {
+		t.Fatalf("unexpected runtime: req=%+v resume=%+v", gotReq, gotResume)
+	}
+}
+
+func TestNewAndRegisterExecutor(t *testing.T) {
+	client := New()
+	client.RegisterExecutor("x", executor.FactoryFunc(func() (executor.Executor, error) {
+		return &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}, nil
+	}))
+
+	resp, err := client.Execute(context.Background(), executor.ExecuteRequest{
+		Prompt:   "hello",
+		Executor: "x",
+	})
+	if err != nil {
+		t.Fatalf("execute with registered executor failed: %v", err)
+	}
+	if resp.SessionID == "" {
+		t.Fatalf("expected session id")
+	}
+}
+
+func TestResumeRespondGetEventsAndShutdown(t *testing.T) {
+	registry := executor.NewRegistry()
+	client := NewWithOptions(ClientOptions{
+		Registry:      registry,
+		StreamManager: streaming.NewManager(),
+		EventStore:    store.NewMemoryEventStore(),
+	})
+
+	mock := &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}
+	registry.Register("test", executor.FactoryFunc(func() (executor.Executor, error) { return mock, nil }))
+
+	resp, err := client.Execute(context.Background(), executor.ExecuteRequest{Prompt: "x", Executor: "test"})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	if err := client.ResumeTask(context.Background(), resp.SessionID, "resume"); err != nil {
+		t.Fatalf("resume failed: %v", err)
+	}
+	if err := client.RespondControl(context.Background(), resp.SessionID, executor.ControlResponse{
+		RequestID: "req-1",
+		Decision:  executor.ControlDecisionApprove,
+	}); err != nil {
+		t.Fatalf("respond control failed: %v", err)
+	}
+
+	events, ok := client.GetSessionEvents(resp.SessionID)
+	if !ok || len(events) == 0 {
+		time.Sleep(50 * time.Millisecond)
+		events, ok = client.GetSessionEvents(resp.SessionID)
+		if !ok || len(events) == 0 {
+			t.Fatalf("expected session events")
+		}
+	}
+
+	client.Shutdown()
+}
+
+func TestSubscribeBranches(t *testing.T) {
+	registry := executor.NewRegistry()
+	client := NewWithOptions(ClientOptions{
+		Registry:      registry,
+		StreamManager: streaming.NewManager(),
+		EventStore:    store.NewMemoryEventStore(),
+	})
+
+	// non-running session with no history should emit synthetic done
+	ch, cancel := client.Subscribe("not-found", executor.SubscribeOptions{})
+	defer cancel()
+	first := <-ch
+	if first.Type != "done" {
+		t.Fatalf("expected synthetic done, got %s", first.Type)
+	}
+}
+
 type testExecutor struct {
 	logs        chan executor.Log
 	done        chan struct{}
 	interrupted bool
 	lastMessage string
+	lastControl executor.ControlResponse
 }
 
 func (m *testExecutor) Start(ctx context.Context, prompt string, opts executor.Options) error {
@@ -281,7 +463,38 @@ func (m *testExecutor) SendMessage(ctx context.Context, message string) error {
 	return nil
 }
 
+func (m *testExecutor) RespondControl(ctx context.Context, response executor.ControlResponse) error {
+	m.lastControl = response
+	return nil
+}
+
 func (m *testExecutor) Wait() error               { return nil }
 func (m *testExecutor) Logs() <-chan executor.Log { return m.logs }
 func (m *testExecutor) Done() <-chan struct{}     { return m.done }
 func (m *testExecutor) Close() error              { return nil }
+
+type resumeExecutor struct {
+	logs        chan executor.Log
+	done        chan struct{}
+	startPrompt string
+	startOpts   executor.Options
+}
+
+func (m *resumeExecutor) Start(ctx context.Context, prompt string, opts executor.Options) error {
+	m.startPrompt = prompt
+	m.startOpts = opts
+	go func() {
+		m.logs <- executor.Log{Type: "done", Content: "done"}
+	}()
+	return nil
+}
+
+func (m *resumeExecutor) Interrupt() error                                      { return nil }
+func (m *resumeExecutor) SendMessage(ctx context.Context, message string) error { return nil }
+func (m *resumeExecutor) RespondControl(ctx context.Context, response executor.ControlResponse) error {
+	return nil
+}
+func (m *resumeExecutor) Wait() error               { return nil }
+func (m *resumeExecutor) Logs() <-chan executor.Log { return m.logs }
+func (m *resumeExecutor) Done() <-chan struct{}     { return m.done }
+func (m *resumeExecutor) Close() error              { return nil }
