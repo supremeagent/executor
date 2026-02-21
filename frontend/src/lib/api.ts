@@ -1,11 +1,17 @@
 import type {
+  ApiSessionItem,
   ContinueRequest,
   EventItem,
   ExecuteRequest,
   ExecuteResponse,
+  SessionItem,
 } from '@/types/chat'
 
 const BASE = '/api'
+
+export interface StreamConnection {
+  close: () => void
+}
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -50,6 +56,91 @@ export async function listEvents(sessionId: string, afterSeq = 0): Promise<Event
   return data.events ?? []
 }
 
-export function createStream(sessionId: string) {
-  return new EventSource(`${BASE}/execute/${sessionId}/stream?return_all=false&debug=false`)
+export async function listSessions(): Promise<SessionItem[]> {
+  const data = await request<{ sessions: ApiSessionItem[] }>(`${BASE}/sessions`)
+  const sessions = data.sessions ?? []
+
+  return sessions.map((session) => ({
+    id: session.session_id,
+    title: session.title ?? '',
+    status: session.status,
+    createdAt: session.created_at,
+    updatedAt: session.updated_at,
+    executor: session.executor,
+  }))
+}
+
+export function createStream(
+  sessionId: string,
+  onEvent: (evt: MessageEvent<string>) => void,
+  onError?: (error: unknown) => void,
+): StreamConnection {
+  const controller = new AbortController()
+
+  void (async () => {
+    try {
+      const res = await fetch(`${BASE}/execute/${sessionId}/stream?return_all=false&debug=false`, {
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      })
+
+      if (!res.ok || !res.body) {
+        throw new Error(`stream request failed: ${res.status}`)
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+
+      let buffer = ''
+      let eventType = 'message'
+      let dataLines: string[] = []
+
+      const flushEvent = () => {
+        if (dataLines.length === 0) return
+        const data = dataLines.join('\n')
+        onEvent(new MessageEvent(eventType || 'message', { data }))
+        eventType = 'message'
+        dataLines = []
+      }
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        let lineBreakIndex = buffer.indexOf('\n')
+        while (lineBreakIndex >= 0) {
+          let line = buffer.slice(0, lineBreakIndex)
+          buffer = buffer.slice(lineBreakIndex + 1)
+          lineBreakIndex = buffer.indexOf('\n')
+
+          if (line.endsWith('\r')) line = line.slice(0, -1)
+
+          if (line === '') {
+            flushEvent()
+            continue
+          }
+          if (line.startsWith(':')) continue
+          if (line.startsWith('event:')) {
+            eventType = line.slice(6).trim() || 'message'
+            continue
+          }
+          if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).trimStart())
+          }
+        }
+      }
+
+      flushEvent()
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return
+      onError?.(error)
+    }
+  })()
+
+  return {
+    close() {
+      controller.abort()
+    },
+  }
 }

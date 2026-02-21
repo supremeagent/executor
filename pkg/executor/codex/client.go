@@ -86,7 +86,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	c.stdout = stdout
 
 	// Log the command being executed
-	c.sendLog(executor.Log{Type: "command", Content: fmt.Sprintf("npx %s", strings.Join(args, " "))})
+	c.sendLog(executor.Log{Type: "init", Content: fmt.Sprintf("npx %s", strings.Join(args, " "))})
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -98,7 +98,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			c.sendLog(executor.Log{Type: "stderr", Content: line})
+			c.sendLog(executor.Log{Type: "error", Content: line})
 		}
 	}()
 
@@ -410,12 +410,10 @@ func (c *Client) readLoop(_ context.Context, stdout io.Reader) {
 			continue
 		}
 
-		c.sendLog(executor.Log{Type: "debug", Content: fmt.Sprintf("readLoop received: %s", line)})
-
 		// Try to parse as JSON-RPC message
 		var msg JSONRPCMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			c.sendLog(executor.Log{Type: "stdout", Content: line})
+			c.sendLog(executor.Log{Type: "error", Content: line})
 			continue
 		}
 
@@ -430,16 +428,16 @@ func (c *Client) readLoop(_ context.Context, stdout io.Reader) {
 		}
 
 		// Always log the message
-		c.sendLog(executor.Log{Type: "stdout", Content: line})
+		if msg.Method == "" {
+			c.sendLog(executor.Log{Type: "output", Content: line})
+		} else {
+			// Check for events
+			c.sendLog(executor.Log{Type: msg.Method, Content: msg.Params})
 
-		// Check for other events
-		if strings.HasPrefix(msg.Method, "codex/event/") {
-			c.sendLog(executor.Log{Type: "event", Content: msg})
-		}
-
-		// Check for task completion
-		if msg.Method == "codex/event/task_complete" {
-			return
+			// Check for task completion
+			if msg.Method == "codex/event/task_complete" {
+				return
+			}
 		}
 	}
 }

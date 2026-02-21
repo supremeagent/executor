@@ -2,23 +2,25 @@ package sdk
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/supremeagent/executor/pkg/executor"
+	"github.com/supremeagent/executor/pkg/store"
 	"github.com/supremeagent/executor/pkg/streaming"
 )
 
 func TestClientExecutePauseContinue(t *testing.T) {
 	registry := executor.NewRegistry()
 	streamMgr := streaming.NewManager()
-	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streamMgr, EventStore: NewMemoryEventStore()})
+	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streamMgr, EventStore: store.NewMemoryEventStore()})
 
 	mock := &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}
 	registry.Register("test", executor.FactoryFunc(func() (executor.Executor, error) { return mock, nil }))
 
-	resp, err := client.Execute(context.Background(), ExecuteRequest{Prompt: "hello", Executor: "test"})
+	resp, err := client.Execute(context.Background(), executor.ExecuteRequest{Prompt: "hello", Executor: "test"})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -41,18 +43,18 @@ func TestClientExecutePauseContinue(t *testing.T) {
 
 func TestClientSubscribeAndListFromStore(t *testing.T) {
 	registry := executor.NewRegistry()
-	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streaming.NewManager(), EventStore: NewMemoryEventStore()})
+	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streaming.NewManager(), EventStore: store.NewMemoryEventStore()})
 
 	sessionID := "s1"
-	_, err := client.store.Append(context.Background(), Event{SessionID: sessionID, Type: "stdout", Content: "history"})
+	_, err := client.store.Append(context.Background(), executor.Event{SessionID: sessionID, Type: "stdout", Content: "history"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.store.Append(context.Background(), Event{SessionID: sessionID, Type: "debug", Content: "hidden"})
+	_, err = client.store.Append(context.Background(), executor.Event{SessionID: sessionID, Type: "debug", Content: "hidden"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.store.Append(context.Background(), Event{SessionID: sessionID, Type: "done", Content: "done"})
+	_, err = client.store.Append(context.Background(), executor.Event{SessionID: sessionID, Type: "done", Content: "done"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +67,10 @@ func TestClientSubscribeAndListFromStore(t *testing.T) {
 		t.Fatalf("expected 3 listed events, got %d", len(listed))
 	}
 
-	ch, cancel := client.Subscribe(sessionID, SubscribeOptions{ReturnAll: true, IncludeDebug: false})
+	ch, cancel := client.Subscribe(sessionID, executor.SubscribeOptions{ReturnAll: true, IncludeDebug: false})
 	defer cancel()
 
-	var events []Event
+	var events []executor.Event
 	for evt := range ch {
 		events = append(events, evt)
 	}
@@ -95,12 +97,12 @@ func TestHooks(t *testing.T) {
 	client := NewWithOptions(ClientOptions{
 		Registry:      registry,
 		StreamManager: streaming.NewManager(),
-		EventStore:    NewMemoryEventStore(),
-		Hooks: Hooks{
-			OnSessionStart: func(ctx context.Context, sessionID string, req ExecuteRequest) {
+		EventStore:    store.NewMemoryEventStore(),
+		Hooks: executor.Hooks{
+			OnSessionStart: func(ctx context.Context, sessionID string, req executor.ExecuteRequest) {
 				atomic.AddInt32(&startCount, 1)
 			},
-			OnEventStored: func(ctx context.Context, evt Event) {
+			OnEventStored: func(ctx context.Context, evt executor.Event) {
 				atomic.AddInt32(&eventCount, 1)
 			},
 			OnSessionEnd: func(ctx context.Context, sessionID string) {
@@ -109,7 +111,7 @@ func TestHooks(t *testing.T) {
 		},
 	})
 
-	_, err := client.Execute(context.Background(), ExecuteRequest{Prompt: "hello", Executor: "test"})
+	_, err := client.Execute(context.Background(), executor.ExecuteRequest{Prompt: "hello", Executor: "test"})
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -128,9 +130,128 @@ func TestHooks(t *testing.T) {
 
 func TestExecuteValidation(t *testing.T) {
 	client := NewWithRegistry(executor.NewRegistry(), streaming.NewManager())
-	_, err := client.Execute(context.Background(), ExecuteRequest{})
+	_, err := client.Execute(context.Background(), executor.ExecuteRequest{})
 	if err != ErrPromptRequired {
 		t.Fatalf("expected ErrPromptRequired, got %v", err)
+	}
+}
+
+func TestListSessions(t *testing.T) {
+	registry := executor.NewRegistry()
+	streamMgr := streaming.NewManager()
+	client := NewWithOptions(ClientOptions{Registry: registry, StreamManager: streamMgr, EventStore: store.NewMemoryEventStore()})
+
+	mock := &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}
+	registry.Register("test", executor.FactoryFunc(func() (executor.Executor, error) { return mock, nil }))
+
+	resp, err := client.Execute(context.Background(), executor.ExecuteRequest{Prompt: "list sessions", Executor: "test"})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	sessions := client.ListSessions(context.Background())
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+
+	session := sessions[0]
+	if session.SessionID != resp.SessionID {
+		t.Fatalf("unexpected session id: %s", session.SessionID)
+	}
+	if session.Status != executor.SessionStatusDone {
+		t.Fatalf("expected done status, got %s", session.Status)
+	}
+	if session.Title != "list sessions" {
+		t.Fatalf("unexpected session title: %q", session.Title)
+	}
+	if session.Executor != "test" {
+		t.Fatalf("unexpected executor: %s", session.Executor)
+	}
+}
+
+func TestDefaultTransformer_NormalizesCodexAndClaude(t *testing.T) {
+	registry := executor.NewRegistry()
+	client := NewWithOptions(ClientOptions{
+		Registry:      registry,
+		StreamManager: streaming.NewManager(),
+		EventStore:    store.NewMemoryEventStore(),
+	})
+
+	// Register fake executors under built-in names so default transformers apply.
+	registry.Register(string(executor.ExecutorCodex), executor.FactoryFunc(func() (executor.Executor, error) {
+		return &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}, nil
+	}))
+	registry.Register(string(executor.ExecutorClaudeCode), executor.FactoryFunc(func() (executor.Executor, error) {
+		return &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}, nil
+	}))
+
+	for _, execName := range []executor.ExecutorType{executor.ExecutorCodex, executor.ExecutorClaudeCode} {
+		resp, err := client.Execute(context.Background(), executor.ExecuteRequest{Prompt: "hello", Executor: execName})
+		if err != nil {
+			t.Fatalf("execute failed for %s: %v", execName, err)
+		}
+		time.Sleep(50 * time.Millisecond)
+
+		events, err := client.ListEvents(context.Background(), resp.SessionID, 0, 0)
+		if err != nil {
+			t.Fatalf("list events failed for %s: %v", execName, err)
+		}
+		if len(events) < 2 {
+			t.Fatalf("expected at least 2 events for %s, got %d", execName, len(events))
+		}
+
+		first := events[0]
+		content, ok := first.Content.(executor.UnifiedContent)
+		if !ok {
+			t.Fatalf("expected UnifiedContent for %s, got %T", execName, first.Content)
+		}
+		if first.Type != "message" {
+			t.Fatalf("expected normalized type=message for %s, got %s", execName, first.Type)
+		}
+		if content.Source != string(execName) || content.SourceType != "stdout" || content.Category != "message" {
+			t.Fatalf("unexpected normalized content for %s: %#v", execName, content)
+		}
+	}
+}
+
+func TestCustomTransformer_OverridesDefault(t *testing.T) {
+	registry := executor.NewRegistry()
+	client := NewWithOptions(ClientOptions{
+		Registry:      registry,
+		StreamManager: streaming.NewManager(),
+		EventStore:    store.NewMemoryEventStore(),
+		Transformers: map[string]executor.EventTransformer{
+			string(executor.ExecutorCodex): func(input executor.TransformInput) executor.Event {
+				return executor.Event{
+					Type: "custom",
+					Content: map[string]any{
+						"text": fmt.Sprintf("%s:%v", input.Log.Type, input.Log.Content),
+					},
+				}
+			},
+		},
+	})
+
+	registry.Register(string(executor.ExecutorCodex), executor.FactoryFunc(func() (executor.Executor, error) {
+		return &testExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}, nil
+	}))
+
+	resp, err := client.Execute(context.Background(), executor.ExecuteRequest{Prompt: "hello", Executor: executor.ExecutorCodex})
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	events, err := client.ListEvents(context.Background(), resp.SessionID, 0, 0)
+	if err != nil {
+		t.Fatalf("list events failed: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatalf("expected events")
+	}
+	if events[0].Type != "custom" {
+		t.Fatalf("expected custom transformed type, got %s", events[0].Type)
 	}
 }
 

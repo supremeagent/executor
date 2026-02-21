@@ -103,7 +103,7 @@ func (h *Handler) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events, unsubscribe := h.client.Subscribe(sessionID, sdk.SubscribeOptions{
+	events, unsubscribe := h.client.Subscribe(sessionID, executor.SubscribeOptions{
 		ReturnAll:    returnAll,
 		IncludeDebug: debugEnabled,
 	})
@@ -151,5 +151,14 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"session_id": sessionID,
 		"events":     events,
+	})
+}
+
+func (h *Handler) HandleSessions(w http.ResponseWriter, r *http.Request) {
+	sessions := h.client.ListSessions(r.Context())
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"sessions": sessions,
 	})
 }

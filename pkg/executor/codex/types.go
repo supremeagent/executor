@@ -48,11 +48,11 @@ func (r *RequestID) UnmarshalJSON(data []byte) error {
 // JSONRPCMessage represents a JSON-RPC message
 type JSONRPCMessage struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      *RequestID     `json:"id,omitempty"`
-	Method  string         `json:"method,omitempty"`
+	ID      *RequestID      `json:"id,omitempty"`
+	Method  string          `json:"method,omitempty"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *JSONRPCError `json:"error,omitempty"`
+	Error   *JSONRPCError   `json:"error,omitempty"`
 }
 
 // JSONRPCError represents a JSON-RPC error
@@ -60,7 +60,7 @@ type JSONRPCError struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
 	Data    json.RawMessage `json:"data,omitempty"`
-	ID      *RequestID     `json:"id,omitempty"`
+	ID      *RequestID      `json:"id,omitempty"`
 }
 
 // ClientInfo represents client information
@@ -72,9 +72,9 @@ type ClientInfo struct {
 
 // InitializeParams represents initialize parameters
 type InitializeParams struct {
-	ClientInfo      ClientInfo  `json:"clientInfo"`
-	Capabilities    interface{} `json:"capabilities,omitempty"`
-	ProtocolVersion string      `json:"protocolVersion,omitempty"`
+	ClientInfo      ClientInfo `json:"clientInfo"`
+	Capabilities    any        `json:"capabilities,omitempty"`
+	ProtocolVersion string     `json:"protocolVersion,omitempty"`
 }
 
 // InitializeResult represents initialize result

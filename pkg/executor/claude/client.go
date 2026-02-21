@@ -56,7 +56,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	cmd.Env = executor.BuildCommandEnv(opts.Env, map[string]string{"CLAUDECODE": ""})
 
 	// Log the command being executed (mask the prompt in logs for brevity)
-	c.sendLog(executor.Log{Type: "command", Content: fmt.Sprintf("npx %s, env: %s", strings.Join(args, " "), strings.Join(cmd.Env, " "))})
+	c.sendLog(executor.Log{Type: "command", Content: fmt.Sprintf("npx %s", strings.Join(args, " "))})
 
 	// Use PTY to get unbuffered output from Node.js
 	ptmx, err := pty.Start(cmd)

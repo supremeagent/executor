@@ -24,6 +24,15 @@ export interface EventItem {
   content: unknown
 }
 
+export interface ApiSessionItem {
+  session_id: string
+  title: string
+  status: 'running' | 'done' | 'interrupted'
+  created_at: string
+  updated_at: string
+  executor: ExecutorType
+}
+
 export interface SessionItem {
   id: string
   title: string
