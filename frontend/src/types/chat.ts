@@ -25,7 +25,10 @@ export interface UnifiedEventContent {
   source: string
   source_type: string
   category: string
+  action?: string
   phase?: string
+  summary?: string
+  target?: string
   text?: string
   tool_name?: string
   request_id?: string

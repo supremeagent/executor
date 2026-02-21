@@ -123,7 +123,10 @@ type UnifiedContent struct {
 	Source     string `json:"source"`
 	SourceType string `json:"source_type"`
 	Category   string `json:"category"`
+	Action     string `json:"action,omitempty"`
 	Phase      string `json:"phase,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	Target     string `json:"target,omitempty"`
 	Text       string `json:"text,omitempty"`
 	ToolName   string `json:"tool_name,omitempty"`
 	RequestID  string `json:"request_id,omitempty"`

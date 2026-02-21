@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import JsonCodeView from "@/components/json-code-view";
 import {
   Card,
   CardContent,
@@ -26,24 +27,8 @@ import {
   listSessions,
   respondControl,
 } from "@/lib/api";
+import { buildEventViewModel, toUnifiedContent } from "@/lib/event-display";
 import type { EventItem, ExecutorType, SessionItem, UnifiedEventContent } from "@/types/chat";
-
-function summarizeContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (content == null) return "";
-  try {
-    return JSON.stringify(content);
-  } catch {
-    return String(content);
-  }
-}
-
-function toUnifiedContent(content: unknown): UnifiedEventContent | null {
-  if (content && typeof content === "object" && "category" in (content as Record<string, unknown>)) {
-    return content as UnifiedEventContent;
-  }
-  return null;
-}
 
 function formatTime(v: string): string {
   const d = new Date(v);
@@ -52,16 +37,27 @@ function formatTime(v: string): string {
 }
 
 export default function App() {
+  type FilterState = {
+    types: string[];
+    categories: string[];
+    actions: string[];
+  };
+
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, EventItem[]>>({});
-  const [prompt, setPrompt] = useState("");
-  const [followup, setFollowup] = useState("");
+  const [draftMessage, setDraftMessage] = useState("");
   const [executor, setExecutor] = useState<ExecutorType>("codex");
   const [workingDir, setWorkingDir] = useState(".");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<FilterState>({
+    types: [],
+    categories: [],
+    actions: [],
+  });
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const streamRef = useRef<{ close: () => void } | null>(null);
 
   useEffect(() => {
@@ -135,10 +131,10 @@ export default function App() {
             prev.map((item) =>
               item.id === sessionId
                 ? {
-                    ...item,
-                    status: "done",
-                    updatedAt: new Date().toISOString(),
-                  }
+                  ...item,
+                  status: "done",
+                  updatedAt: new Date().toISOString(),
+                }
                 : item,
             ),
           );
@@ -154,10 +150,10 @@ export default function App() {
         prev.map((item) =>
           item.id === sessionId && item.status === "running"
             ? {
-                ...item,
-                status: "interrupted",
-                updatedAt: new Date().toISOString(),
-              }
+              ...item,
+              status: "interrupted",
+              updatedAt: new Date().toISOString(),
+            }
             : item,
         ),
       );
@@ -165,7 +161,7 @@ export default function App() {
   }
 
   async function handleCreateSession() {
-    const trimmed = prompt.trim();
+    const trimmed = draftMessage.trim();
     if (!trimmed) return;
 
     setBusy(true);
@@ -190,7 +186,7 @@ export default function App() {
       setSessions((prev) => [session, ...prev]);
       setSelectedId(session.id);
       setMessages((prev) => ({ ...prev, [session.id]: [] }));
-      setPrompt("");
+      setDraftMessage("");
 
       await loadSessionMessages(session.id);
       attachStream(session.id);
@@ -214,22 +210,22 @@ export default function App() {
 
   async function handleFollowup() {
     if (!selectedSession) return;
-    const text = followup.trim();
+    const text = draftMessage.trim();
     if (!text) return;
 
     setBusy(true);
     setError(null);
     try {
       await continueTask(selectedSession.id, { message: text });
-      setFollowup("");
+      setDraftMessage("");
       setSessions((prev) =>
         prev.map((item) =>
           item.id === selectedSession.id
             ? {
-                ...item,
-                status: "running",
-                updatedAt: new Date().toISOString(),
-              }
+              ...item,
+              status: "running",
+              updatedAt: new Date().toISOString(),
+            }
             : item,
         ),
       );
@@ -265,10 +261,10 @@ export default function App() {
         prev.map((item) =>
           item.id === selectedSession.id
             ? {
-                ...item,
-                status: "interrupted",
-                updatedAt: new Date().toISOString(),
-              }
+              ...item,
+              status: "interrupted",
+              updatedAt: new Date().toISOString(),
+            }
             : item,
         ),
       );
@@ -282,16 +278,64 @@ export default function App() {
 
   const activeMessages = selectedId ? (messages[selectedId] ?? []) : [];
 
+  const filterOptions = useMemo(() => {
+    const typeSet = new Set<string>();
+    const categorySet = new Set<string>();
+    const actionSet = new Set<string>();
+
+    for (const event of activeMessages) {
+      typeSet.add(event.type);
+      const content = toUnifiedContent(event.content);
+      if (!content) continue;
+      if (content.category) categorySet.add(content.category);
+      if (content.action) actionSet.add(content.action);
+    }
+
+    return {
+      types: Array.from(typeSet).sort(),
+      categories: Array.from(categorySet).sort(),
+      actions: Array.from(actionSet).sort(),
+    };
+  }, [activeMessages]);
+
+  const filteredMessages = useMemo(() => {
+    return activeMessages.filter((event) => {
+      const content = toUnifiedContent(event.content);
+      if (filters.types.length > 0 && !filters.types.includes(event.type)) {
+        return false;
+      }
+      if (filters.categories.length > 0) {
+        const category = content?.category ?? "";
+        if (!filters.categories.includes(category)) return false;
+      }
+      if (filters.actions.length > 0) {
+        const action = content?.action ?? "";
+        if (!filters.actions.includes(action)) return false;
+      }
+      return true;
+    });
+  }, [activeMessages, filters]);
+
+  function toggleFilter(key: keyof FilterState, value: string) {
+    setFilters((prev) => {
+      const exists = prev[key].includes(value);
+      const nextValues = exists
+        ? prev[key].filter((item) => item !== value)
+        : [...prev[key], value];
+      return { ...prev, [key]: nextValues };
+    });
+  }
+
+  function clearFilters() {
+    setFilters({
+      types: [],
+      categories: [],
+      actions: [],
+    });
+  }
+
   return (
     <div className="page">
-      <header className="hero">
-        <div>
-          <p className="eyebrow">Creative Tim x shadcn/ui Playground</p>
-          <h1>Executor 会话测试页面</h1>
-          <p>用于发起任务、查看会话列表、追踪流式消息、追加提问和中断执行。</p>
-        </div>
-      </header>
-
       <main className="layout">
         <Card className="sidebar">
           <CardHeader>
@@ -338,9 +382,9 @@ export default function App() {
             </CardHeader>
             <CardContent className="form-grid">
               <Textarea
-                placeholder="例如：帮我总结当前仓库结构并提出优化建议"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="输入内容：可发起新会话，也可对当前会话追加问题"
+                value={draftMessage}
+                onChange={(e) => setDraftMessage(e.target.value)}
                 rows={4}
               />
               <div className="inline-fields">
@@ -365,38 +409,19 @@ export default function App() {
                   />
                 </label>
               </div>
-              <Button
-                onClick={() => void handleCreateSession()}
-                disabled={busy || !prompt.trim()}
-              >
-                <Sparkles size={16} /> 发起会话
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>会话消息</CardTitle>
-              <CardDescription>
-                {selectedSession
-                  ? `当前会话：${selectedSession.id}`
-                  : "请从左侧选择会话，或先创建一个新会话"}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="actions">
-                <Input
-                  placeholder="追加问题，例如：请给出更详细的实施步骤"
-                  value={followup}
-                  onChange={(e) => setFollowup(e.target.value)}
-                  disabled={!selectedSession}
-                />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <Button
+                  onClick={() => void handleCreateSession()}
+                  disabled={busy || !draftMessage.trim()}
+                >
+                  <Sparkles size={16} /> 发起会话
+                </Button>
                 <Button
                   variant="secondary"
                   onClick={() => void handleFollowup()}
                   disabled={
                     !selectedSession ||
-                    !followup.trim() ||
+                    !draftMessage.trim() ||
                     busy
                   }
                 >
@@ -419,44 +444,130 @@ export default function App() {
                   <Play size={16} /> 刷新
                 </Button>
               </div>
+            </CardContent>
+          </Card>
 
+          <Card>
+            <CardHeader>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <CardTitle>会话消息</CardTitle>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setFilterPanelOpen((v) => !v)}
+                  >
+                    {filterPanelOpen ? "收起筛选" : "展开筛选"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={clearFilters}
+                    disabled={filters.types.length === 0 && filters.categories.length === 0 && filters.actions.length === 0}
+                  >
+                    清空筛选
+                  </Button>
+                </div>
+              </div>
+              <CardDescription>
+                {selectedSession
+                  ? `当前会话：${selectedSession.id}`
+                  : "请从左侧选择会话，或先创建一个新会话"}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
               {error && <div className="error-box">{error}</div>}
+
+              {filterPanelOpen ? (
+                <div style={{ marginBottom: 12, display: "grid", gap: 8 }}>
+                  <div>
+                    <small>类型（type，多选）</small>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                      {filterOptions.types.map((type) => (
+                        <label key={type} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <input
+                            type="checkbox"
+                            checked={filters.types.includes(type)}
+                            onChange={() => toggleFilter("types", type)}
+                          />
+                          <span>{type}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <small>类别（category，多选）</small>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                      {filterOptions.categories.map((category) => (
+                        <label key={category} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <input
+                            type="checkbox"
+                            checked={filters.categories.includes(category)}
+                            onChange={() => toggleFilter("categories", category)}
+                          />
+                          <span>{category}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <small>动作（action，多选）</small>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+                      {filterOptions.actions.map((action) => (
+                        <label key={action} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <input
+                            type="checkbox"
+                            checked={filters.actions.includes(action)}
+                            onChange={() => toggleFilter("actions", action)}
+                          />
+                          <span>{action}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="message-panel">
                 {loading ? (
                   <div className="empty">加载中...</div>
                 ) : activeMessages.length === 0 ? (
                   <div className="empty">当前会话暂无消息</div>
+                ) : filteredMessages.length === 0 ? (
+                  <div className="empty">没有符合当前筛选条件的消息</div>
                 ) : (
-                  activeMessages.map((event, idx) => (
-                    <article
-                      key={`${event.seq ?? "n"}-${idx}`}
-                      className="message-item"
-                    >
-                      <header>
-                        <Badge>{event.type}</Badge>
-                        <small>
-                          {event.timestamp
-                            ? formatTime(event.timestamp)
-                            : "streaming..."}
-                        </small>
-                      </header>
-                      {(() => {
-                        const content = toUnifiedContent(event.content);
-                        if (!content) return null;
-                        return (
+                  filteredMessages.map((event, idx) => {
+                    const view = buildEventViewModel(event);
+                    const content = view.unified as UnifiedEventContent | null;
+
+                    return (
+                      <article
+                        key={`${event.seq ?? "n"}-${idx}`}
+                        className="message-item"
+                      >
+                        <header>
+                          <Badge>{event.type}</Badge>
+                          <small>
+                            {event.timestamp
+                              ? formatTime(event.timestamp)
+                              : "streaming..."}
+                          </small>
+                        </header>
+                        <p style={{ margin: "6px 0", fontWeight: 600 }}>{view.headline}</p>
+                        {content ? (
                           <div style={{ marginBottom: 6, display: "flex", gap: 8, flexWrap: "wrap" }}>
                             <Badge>{content.category}</Badge>
+                            {content.action ? <Badge>{content.action}</Badge> : null}
                             {content.phase ? <Badge>{content.phase}</Badge> : null}
                             {content.tool_name ? <Badge>{content.tool_name}</Badge> : null}
+                            {content.target ? <Badge>{content.target}</Badge> : null}
                           </div>
-                        );
-                      })()}
-                      <pre>{summarizeContent(event.content)}</pre>
-                      {(() => {
-                        const content = toUnifiedContent(event.content);
-                        if (!content || content.category !== "approval" || !content.request_id) return null;
-                        return (
+                        ) : null}
+                        {view.details.length > 0 ? <small>{view.details.join(" | ")}</small> : null}
+                        {view.rawText ? <JsonCodeView value={view.rawText} /> : null}
+                        {content && content.category === "approval" && content.request_id ? (
                           <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
                             <Button
                               size="sm"
@@ -475,10 +586,10 @@ export default function App() {
                               Deny
                             </Button>
                           </div>
-                        );
-                      })()}
-                    </article>
-                  ))
+                        ) : null}
+                      </article>
+                    );
+                  })
                 )}
               </div>
             </CardContent>
@@ -495,7 +606,7 @@ export default function App() {
           size="sm"
           variant="outline"
           onClick={() => void handleCreateSession()}
-          disabled={busy || !prompt.trim()}
+          disabled={busy || !draftMessage.trim()}
         >
           <SendHorizontal size={14} /> 快速发送
         </Button>
