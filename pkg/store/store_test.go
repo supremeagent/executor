@@ -1,9 +1,11 @@
-package sdk
+package store
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/supremeagent/executor/pkg/executor"
 )
 
 func TestMemoryEventStoreCleanupAfterDoneTTL(t *testing.T) {
@@ -14,8 +16,8 @@ func TestMemoryEventStoreCleanupAfterDoneTTL(t *testing.T) {
 	defer store.Close()
 
 	sessionID := "session-done-expire"
-	_, _ = store.Append(context.Background(), Event{SessionID: sessionID, Type: "stdout", Content: "hello"})
-	_, _ = store.Append(context.Background(), Event{SessionID: sessionID, Type: "done", Content: "done"})
+	_, _ = store.Append(context.Background(), executor.Event{SessionID: sessionID, Type: "stdout", Content: "hello"})
+	_, _ = store.Append(context.Background(), executor.Event{SessionID: sessionID, Type: "done", Content: "done"})
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for {
@@ -41,7 +43,7 @@ func TestMemoryEventStoreDoesNotCleanupRunningSession(t *testing.T) {
 	defer store.Close()
 
 	sessionID := "session-running-keep"
-	_, _ = store.Append(context.Background(), Event{SessionID: sessionID, Type: "stdout", Content: "still running"})
+	_, _ = store.Append(context.Background(), executor.Event{SessionID: sessionID, Type: "stdout", Content: "still running"})
 
 	time.Sleep(200 * time.Millisecond)
 	events, err := store.List(context.Background(), sessionID, ListOptions{})

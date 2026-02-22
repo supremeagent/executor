@@ -1,9 +1,11 @@
-package sdk
+package store
 
 import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/supremeagent/executor/pkg/executor"
 )
 
 // ListOptions controls event list query behavior.
@@ -15,15 +17,15 @@ type ListOptions struct {
 
 // EventStore persists execution events.
 type EventStore interface {
-	Append(ctx context.Context, evt Event) (Event, error)
-	List(ctx context.Context, sessionID string, opts ListOptions) ([]Event, error)
+	Append(ctx context.Context, evt executor.Event) (executor.Event, error)
+	List(ctx context.Context, sessionID string, opts ListOptions) ([]executor.Event, error)
 	LatestSeq(ctx context.Context, sessionID string) (uint64, error)
 }
 
 // MemoryEventStore is the default in-memory EventStore implementation.
 type MemoryEventStore struct {
 	mu              sync.RWMutex
-	events          map[string][]Event
+	events          map[string][]executor.Event
 	nextSeq         map[string]uint64
 	sessionDoneAt   map[string]time.Time
 	expireAfterDone time.Duration
@@ -57,7 +59,7 @@ func NewMemoryEventStoreWithExpiration(expireAfterDone time.Duration) *MemoryEve
 // NewMemoryEventStoreWithOptions creates an in-memory store with custom options.
 func NewMemoryEventStoreWithOptions(opts MemoryEventStoreOptions) *MemoryEventStore {
 	store := &MemoryEventStore{
-		events:          make(map[string][]Event),
+		events:          make(map[string][]executor.Event),
 		nextSeq:         make(map[string]uint64),
 		sessionDoneAt:   make(map[string]time.Time),
 		expireAfterDone: opts.ExpireAfterDone,
@@ -75,7 +77,7 @@ func NewMemoryEventStoreWithOptions(opts MemoryEventStoreOptions) *MemoryEventSt
 	return store
 }
 
-func (s *MemoryEventStore) Append(ctx context.Context, evt Event) (Event, error) {
+func (s *MemoryEventStore) Append(ctx context.Context, evt executor.Event) (executor.Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -92,7 +94,7 @@ func (s *MemoryEventStore) Append(ctx context.Context, evt Event) (Event, error)
 	return evt, nil
 }
 
-func (s *MemoryEventStore) List(ctx context.Context, sessionID string, opts ListOptions) ([]Event, error) {
+func (s *MemoryEventStore) List(ctx context.Context, sessionID string, opts ListOptions) ([]executor.Event, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -101,7 +103,7 @@ func (s *MemoryEventStore) List(ctx context.Context, sessionID string, opts List
 		return nil, nil
 	}
 
-	out := make([]Event, 0, len(src))
+	out := make([]executor.Event, 0, len(src))
 	for _, evt := range src {
 		if opts.AfterSeq > 0 && evt.Seq <= opts.AfterSeq {
 			continue

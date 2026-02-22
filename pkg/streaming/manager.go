@@ -44,15 +44,13 @@ func (m *Manager) AppendLog(sessionID string, entry LogEntry) {
 	copy(subs, m.subscribers[sessionID])
 	m.mu.Unlock()
 
-	log.Debugf("AppendLog: session=%s, type=%s, subscribers=%d", sessionID, entry.Type, len(subs))
-
 	// Notify all subscribers
 	for i, ch := range subs {
 		select {
 		case ch <- entry:
-			log.Debugf("AppendLog: sent to subscriber %d", i)
+			// log.Debugf("AppendLog: sent to subscriber %d", i)
 		default:
-			log.Debugf("AppendLog: subscriber %d channel full, skipped", i)
+			log.Warningf("AppendLog: subscriber %d channel full, skipped", i)
 		}
 	}
 }
@@ -64,7 +62,6 @@ func (m *Manager) Subscribe(sessionID string) (<-chan LogEntry, func()) {
 
 	ch := make(chan LogEntry, 100)
 	m.subscribers[sessionID] = append(m.subscribers[sessionID], ch)
-	log.Debugf("Subscribe: session=%s, total_subscribers=%d", sessionID, len(m.subscribers[sessionID]))
 
 	unsubscribe := func() {
 		m.mu.Lock()

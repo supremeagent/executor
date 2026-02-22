@@ -32,6 +32,7 @@ type Client struct {
 
 	pendingMu sync.Mutex
 	pending   map[int64]chan JSONRPCMessage
+	control   map[string]RequestID
 
 	commandRun func(name string, arg ...string) *exec.Cmd
 	idCounter  int64
@@ -43,6 +44,7 @@ func NewClient() *Client {
 		logsChan:   make(chan executor.Log, 100),
 		doneChan:   make(chan struct{}),
 		pending:    make(map[int64]chan JSONRPCMessage),
+		control:    make(map[string]RequestID),
 		commandRun: exec.Command,
 		idCounter:  1,
 	}
@@ -86,7 +88,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	c.stdout = stdout
 
 	// Log the command being executed
-	c.sendLog(executor.Log{Type: "command", Content: fmt.Sprintf("npx %s", strings.Join(args, " "))})
+	c.sendLog(executor.Log{Type: "init", Content: fmt.Sprintf("npx %s", strings.Join(args, " "))})
 
 	// Start the process
 	if err := cmd.Start(); err != nil {
@@ -98,12 +100,13 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
 			line := scanner.Text()
-			c.sendLog(executor.Log{Type: "stderr", Content: line})
+			c.sendLog(executor.Log{Type: "error", Content: line})
 		}
 	}()
 
-	// Determine auto-approve setting
-	c.autoApprove = opts.AskForApproval == "never" || opts.AskForApproval == ""
+	// Determine auto-approve setting.
+	// Only explicit "never" should auto-approve; empty value defaults to unless-trusted.
+	c.autoApprove = strings.EqualFold(strings.TrimSpace(opts.AskForApproval), "never")
 
 	// Start reading responses in background
 	go c.readLoop(ctx, stdout)
@@ -122,7 +125,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 		}
 
 		// Start a new conversation
-		conversationID, err := c.newConversation(opts)
+		conversationID, err := c.startOrResumeConversation(opts)
 		if err != nil {
 			sendError(fmt.Sprintf("failed to create conversation: %v", err))
 			return
@@ -219,6 +222,48 @@ func (c *Client) newConversation(opts executor.Options) (string, error) {
 	return result.ConversationID, nil
 }
 
+func (c *Client) resumeConversation(opts executor.Options) (string, error) {
+	params := ResumeConversationParams{
+		Path: opts.ResumePath,
+		Overrides: &NewConversationParams{
+			Model:                opts.Model,
+			Sandbox:              opts.Sandbox,
+			AskForApproval:       opts.AskForApproval,
+			ModelReasoningEffort: opts.ModelReasoningEffort,
+			WorkingDirectory:     opts.WorkingDir,
+		},
+	}
+	if opts.ResumeSessionID != "" {
+		params.ConversationID = opts.ResumeSessionID
+	}
+
+	req := JSONRPCMessage{
+		JSONRPC: "2.0",
+		ID:      ptrToRequestID(c.nextID()),
+		Method:  "resumeConversation",
+		Params:  mustJSON(params),
+	}
+
+	resp, err := c.sendRequest(req)
+	if err != nil {
+		return "", err
+	}
+
+	var result ResumeConversationResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return "", fmt.Errorf("failed to parse resumeConversation result: %w", err)
+	}
+
+	return result.ConversationID, nil
+}
+
+func (c *Client) startOrResumeConversation(opts executor.Options) (string, error) {
+	if opts.ResumeSessionID != "" || opts.ResumePath != "" {
+		return c.resumeConversation(opts)
+	}
+	return c.newConversation(opts)
+}
+
 func (c *Client) addListener(conversationID string) error {
 	params := AddConversationListenerParams{
 		ConversationID:        conversationID,
@@ -273,6 +318,38 @@ func (c *Client) SendMessage(ctx context.Context, message string) error {
 	return c.sendUserMessage(c.conversationID, message)
 }
 
+func (c *Client) RespondControl(ctx context.Context, response executor.ControlResponse) error {
+	c.pendingMu.Lock()
+	reqID, ok := c.control[response.RequestID]
+	c.pendingMu.Unlock()
+	if !ok {
+		return fmt.Errorf("control request %s not found", response.RequestID)
+	}
+
+	decision := "approved"
+	if response.Decision == executor.ControlDecisionDeny {
+		decision = "denied"
+	}
+
+	msg := JSONRPCMessage{
+		JSONRPC: "2.0",
+		ID:      &reqID,
+		Result: mustJSON(map[string]any{
+			"decision": decision,
+			"reason":   response.Reason,
+		}),
+	}
+
+	if err := c.sendJSON(msg); err != nil {
+		return err
+	}
+
+	c.pendingMu.Lock()
+	delete(c.control, response.RequestID)
+	c.pendingMu.Unlock()
+	return nil
+}
+
 // Wait waits for the execution to complete
 func (c *Client) Wait() error {
 	<-c.doneChan
@@ -312,6 +389,7 @@ func (c *Client) Close() error {
 			close(ch)
 		}
 		c.pending = nil
+		c.control = nil
 		c.pendingMu.Unlock()
 	})
 
@@ -410,17 +488,15 @@ func (c *Client) readLoop(_ context.Context, stdout io.Reader) {
 			continue
 		}
 
-		c.sendLog(executor.Log{Type: "debug", Content: fmt.Sprintf("readLoop received: %s", line)})
-
 		// Try to parse as JSON-RPC message
 		var msg JSONRPCMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			c.sendLog(executor.Log{Type: "stdout", Content: line})
+			c.sendLog(executor.Log{Type: "error", Content: line})
 			continue
 		}
 
-		// If it's a response, send to pending request
-		if msg.ID != nil && msg.ID.Number != nil {
+		// If it's a response, send to pending request.
+		if msg.Method == "" && msg.ID != nil && msg.ID.Number != nil {
 			id := *msg.ID.Number
 			c.pendingMu.Lock()
 			if ch, ok := c.pending[id]; ok {
@@ -430,16 +506,43 @@ func (c *Client) readLoop(_ context.Context, stdout io.Reader) {
 		}
 
 		// Always log the message
-		c.sendLog(executor.Log{Type: "stdout", Content: line})
+		if msg.Method == "" {
+			c.sendLog(executor.Log{Type: "output", Content: line})
+		} else {
+			// JSON-RPC requests with method+id are interactive control requests.
+			if msg.ID != nil && isControlMethod(msg.Method, msg.Params) {
+				requestID := requestIDToString(*msg.ID)
+				c.pendingMu.Lock()
+				if c.control != nil {
+					c.control[requestID] = *msg.ID
+				}
+				c.pendingMu.Unlock()
 
-		// Check for other events
-		if strings.HasPrefix(msg.Method, "codex/event/") {
-			c.sendLog(executor.Log{Type: "event", Content: msg})
-		}
+				c.sendLog(executor.Log{
+					Type: "control_request",
+					Content: map[string]any{
+						"request_id": requestID,
+						"method":     msg.Method,
+						"params":     json.RawMessage(msg.Params),
+					},
+				})
 
-		// Check for task completion
-		if msg.Method == "codex/event/task_complete" {
-			return
+				if c.autoApprove {
+					_ = c.RespondControl(context.Background(), executor.ControlResponse{
+						RequestID: requestID,
+						Decision:  executor.ControlDecisionApprove,
+						Reason:    "auto approved",
+					})
+				}
+			}
+
+			// Check for events
+			c.sendLog(executor.Log{Type: msg.Method, Content: msg.Params})
+
+			// Check for task completion
+			if msg.Method == "codex/event/task_complete" {
+				return
+			}
 		}
 	}
 }
@@ -463,4 +566,27 @@ func ptrToRequestID(id RequestID) *RequestID {
 func mustJSON(v any) json.RawMessage {
 	data, _ := json.Marshal(v)
 	return data
+}
+
+func requestIDToString(id RequestID) string {
+	if id.Number != nil {
+		return fmt.Sprintf("%d", *id.Number)
+	}
+	if id.String != nil {
+		return *id.String
+	}
+	return ""
+}
+
+func isControlMethod(method string, params json.RawMessage) bool {
+	if strings.Contains(strings.ToLower(method), "approval") {
+		return true
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(params, &payload); err == nil {
+		if _, ok := payload["call_id"]; ok {
+			return true
+		}
+	}
+	return false
 }

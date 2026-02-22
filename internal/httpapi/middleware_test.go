@@ -43,4 +43,7 @@ func TestRouter(t *testing.T) {
 	if router == nil {
 		t.Fatal("router should not be nil")
 	}
+
+	rr := &responseWriter{ResponseWriter: httptest.NewRecorder(), statusCode: http.StatusOK}
+	rr.Flush()
 }

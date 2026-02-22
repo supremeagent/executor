@@ -1,8 +1,12 @@
 package httpapi
 
-import "github.com/supremeagent/executor/pkg/sdk"
+import (
+	"github.com/supremeagent/executor/pkg/executor"
+)
 
-type ExecuteRequest = sdk.ExecuteRequest
-type ExecuteResponse = sdk.ExecuteResponse
-type ContinueRequest = sdk.ContinueRequest
-type LogEvent = sdk.Event
+type ExecuteRequest = executor.ExecuteRequest
+type ExecuteResponse = executor.ExecuteResponse
+type ContinueRequest = executor.ContinueRequest
+type ControlResponse = executor.ControlResponse
+type Session = executor.Session
+type LogEvent = executor.Event
