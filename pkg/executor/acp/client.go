@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
 
+	"github.com/creack/pty"
 	"github.com/supremeagent/executor/pkg/executor"
 )
 
@@ -26,9 +28,9 @@ type Client struct {
 	// args is the full argument vector: args[0] is the program, args[1:] are flags.
 	args []string
 
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
+	cmd     *exec.Cmd
+	ptyFile *os.File
+	stdin   io.WriteCloser
 
 	logsChan  chan executor.Log
 	doneChan  chan struct{}
@@ -89,52 +91,38 @@ func (c *Client) Start(_ context.Context, prompt string, opts executor.Options) 
 	cmd.Env = executor.BuildCommandEnv(opts.Env, map[string]string{
 		"NPM_CONFIG_LOGLEVEL": "error",
 		"NODE_NO_WARNINGS":    "1",
+		"CI":                  "1",
+		"TERM":                "dumb",
+		"NO_COLOR":            "1",
 	})
 
-	stdin, err := cmd.StdinPipe()
+	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		return fmt.Errorf("acp: stdin pipe: %w", err)
-	}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("acp: stdout pipe: %w", err)
-	}
-
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("acp: stderr pipe: %w", err)
+		return fmt.Errorf("acp: start process with pty: %w", err)
 	}
 
 	c.cmd = cmd
-	c.stdin = stdin
-	c.stdout = stdout
+	c.ptyFile = ptmx
+	c.stdin = ptmx
 
 	c.sendLog(executor.Log{
 		Type:    "command",
 		Content: fmt.Sprintf("%s %s", program, strings.Join(rest, " ")),
 	})
 
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("acp: start process: %w", err)
-	}
-
-	// Drain stderr in background; forward lines as error logs.
-	go func() {
-		sc := bufio.NewScanner(stderr)
-		for sc.Scan() {
-			if line := strings.TrimSpace(sc.Text()); line != "" {
-				c.sendLog(executor.Log{Type: "stderr", Content: line})
-			}
-		}
-	}()
-
-	// Stream stdout ACP events.
-	go c.readLoop(stdout)
+	// Stream stdout ACP events from the PTY.
+	go c.readLoop(ptmx)
 
 	// Deliver the user prompt via stdin
 	go func() {
-		if _, err := fmt.Fprintln(stdin, prompt); err != nil {
+		payload := map[string]any{
+			"type":    "user_message",
+			"content": prompt,
+		}
+		data, _ := json.Marshal(payload)
+		// Do not close ptmx here! Otherwise the entire shell dies and we lose events.
+		// ACP relies on continuous interaction.
+		if _, err := fmt.Fprintf(ptmx, "%s\n", data); err != nil {
 			c.sendLog(executor.Log{
 				Type:    "error",
 				Content: fmt.Sprintf("acp: write prompt: %v", err),
@@ -310,8 +298,8 @@ func (c *Client) Close() error {
 			_ = c.cmd.Process.Kill()
 			_ = c.cmd.Wait()
 		}
-		if c.stdin != nil {
-			_ = c.stdin.Close()
+		if c.ptyFile != nil {
+			_ = c.ptyFile.Close()
 		}
 	})
 	return nil
