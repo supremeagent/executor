@@ -160,3 +160,14 @@ func (r *Registry) ShutdownAll() {
 		_ = ex.Close()
 	}
 }
+
+// Executors returns a list of names for all registered executors.
+func (r *Registry) Executors() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.factories))
+	for name := range r.factories {
+		names = append(names, name)
+	}
+	return names
+}

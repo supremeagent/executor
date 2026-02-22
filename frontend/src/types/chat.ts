@@ -1,4 +1,4 @@
-export type ExecutorType = 'codex' | 'claude_code'
+export type ExecutorType = string
 
 export interface ExecuteRequest {
   prompt: string

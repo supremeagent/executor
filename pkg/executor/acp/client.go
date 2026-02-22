@@ -132,9 +132,8 @@ func (c *Client) Start(_ context.Context, prompt string, opts executor.Options) 
 	// Stream stdout ACP events.
 	go c.readLoop(stdout)
 
-	// Deliver the user prompt via stdin; close stdin when done.
+	// Deliver the user prompt via stdin
 	go func() {
-		defer stdin.Close()
 		if _, err := fmt.Fprintln(stdin, prompt); err != nil {
 			c.sendLog(executor.Log{
 				Type:    "error",

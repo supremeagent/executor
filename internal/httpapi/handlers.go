@@ -193,3 +193,13 @@ func (h *Handler) HandleSessions(w http.ResponseWriter, r *http.Request) {
 		"sessions": sessions,
 	})
 }
+
+// HandleExecutors returns the list of available executors
+func (h *Handler) HandleExecutors(w http.ResponseWriter, r *http.Request) {
+	executorsList := h.client.Executors()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"executors": executorsList,
+	})
+}

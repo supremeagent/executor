@@ -78,6 +78,15 @@ export async function listSessions(): Promise<SessionItem[]> {
   }))
 }
 
+export interface ApiExecutorItem {
+  name: string
+}
+
+export async function listExecutors(): Promise<string[]> {
+  const data = await request<{ executors: ApiExecutorItem[] }>(`${BASE}/executors`)
+  return data.executors?.map((e) => e.name) ?? []
+}
+
 export function createStream(
   sessionId: string,
   onEvent: (evt: MessageEvent<string>) => void,

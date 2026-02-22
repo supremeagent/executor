@@ -24,6 +24,7 @@ import {
   executeTask,
   interruptTask,
   listEvents,
+  listExecutors,
   listSessions,
   respondControl,
 } from "@/lib/api";
@@ -47,7 +48,8 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Record<string, EventItem[]>>({});
   const [draftMessage, setDraftMessage] = useState("");
-  const [executor, setExecutor] = useState<ExecutorType>("codex");
+  const [executor, setExecutor] = useState<string>("");
+  const [availableExecutors, setAvailableExecutors] = useState<string[]>([]);
   const [workingDir, setWorkingDir] = useState(".");
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -64,6 +66,21 @@ export default function App() {
     return () => {
       streamRef.current?.close();
     };
+  }, []);
+
+  useEffect(() => {
+    async function initExecutors() {
+      try {
+        const list = await listExecutors();
+        setAvailableExecutors(list);
+        if (list.length > 0) {
+          setExecutor(list[0]);
+        }
+      } catch (e) {
+        console.error("Failed to load executors:", e);
+      }
+    }
+    void initExecutors();
   }, []);
 
   useEffect(() => {
@@ -393,12 +410,15 @@ export default function App() {
                   <select
                     value={executor}
                     onChange={(e) =>
-                      setExecutor(e.target.value as ExecutorType)
+                      setExecutor(e.target.value)
                     }
                     className="select"
                   >
-                    <option value="codex">codex</option>
-                    <option value="claude_code">claude_code</option>
+                    {availableExecutors.map((ex) => (
+                      <option key={ex} value={ex}>
+                        {ex}
+                      </option>
+                    ))}
                   </select>
                 </label>
                 <label>

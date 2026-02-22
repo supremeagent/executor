@@ -15,6 +15,10 @@ import (
 	"github.com/supremeagent/executor/pkg/executor"
 	"github.com/supremeagent/executor/pkg/executor/claude"
 	"github.com/supremeagent/executor/pkg/executor/codex"
+	"github.com/supremeagent/executor/pkg/executor/copilot"
+	"github.com/supremeagent/executor/pkg/executor/droid"
+	"github.com/supremeagent/executor/pkg/executor/gemini"
+	"github.com/supremeagent/executor/pkg/executor/qwen"
 	"github.com/supremeagent/executor/pkg/store"
 	"github.com/supremeagent/executor/pkg/streaming"
 )
@@ -55,11 +59,19 @@ type storeCloser interface {
 	Close()
 }
 
+func RegisterAllExecutors(registry *executor.Registry) {
+	registry.Register(string(executor.ExecutorClaudeCode), claude.NewFactory())
+	registry.Register(string(executor.ExecutorCodex), codex.NewFactory())
+	registry.Register(string(executor.ExecutorQwen), qwen.NewFactory())
+	registry.Register(string(executor.ExecutorDroid), droid.NewFactory())
+	registry.Register(string(executor.ExecutorCopilot), copilot.NewFactory())
+	registry.Register(string(executor.ExecutorGemini), gemini.NewFactory())
+}
+
 // New creates an SDK client with built-in executors registered.
 func New() *Client {
 	registry := executor.NewRegistry()
-	registry.Register(string(executor.ExecutorClaudeCode), claude.NewFactory())
-	registry.Register(string(executor.ExecutorCodex), codex.NewFactory())
+	RegisterAllExecutors(registry)
 
 	return NewWithOptions(ClientOptions{
 		Registry:      registry,
@@ -72,6 +84,7 @@ func New() *Client {
 func NewWithOptions(opts ClientOptions) *Client {
 	if opts.Registry == nil {
 		opts.Registry = executor.NewRegistry()
+		RegisterAllExecutors(opts.Registry)
 	}
 	if opts.StreamManager == nil {
 		opts.StreamManager = streaming.NewManager()
@@ -577,4 +590,18 @@ func (c *Client) Shutdown() {
 	if closer, ok := c.store.(storeCloser); ok {
 		closer.Close()
 	}
+}
+
+type ExecutorMeta struct {
+	Name string `json:"name"`
+}
+
+// Executors returns a list of meta information for all registered executors.
+func (c *Client) Executors() []ExecutorMeta {
+	names := c.registry.Executors()
+	meta := make([]ExecutorMeta, 0, len(names))
+	for _, name := range names {
+		meta = append(meta, ExecutorMeta{Name: name})
+	}
+	return meta
 }
