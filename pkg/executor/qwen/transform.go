@@ -24,19 +24,19 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "执行完成"
+		content.Summary = "Execution completed"
 		eventType = "done"
 	case "stderr", "error":
 		content.Category = "error"
 		content.Action = "failed"
 		content.Phase = "failed"
-		content.Summary = "执行失败"
+		content.Summary = "Execution failed"
 		eventType = "error"
 	case "control_request":
 		content.Category = "approval"
 		content.Action = "approval_required"
 		content.Phase = "requested"
-		content.Summary = "等待用户审批"
+		content.Summary = "Waiting for user approval"
 		eventType = "approval"
 		if obj, ok := parseJSONObject(input.Log.Content); ok {
 			if request, ok := obj["request"].(map[string]any); ok {
@@ -44,19 +44,19 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 			}
 			content.RequestID, _ = obj["request_id"].(string)
 			if content.ToolName != "" {
-				content.Summary = fmt.Sprintf("等待审批：%s", content.ToolName)
+				content.Summary = fmt.Sprintf("Waiting for approval: %s", content.ToolName)
 			}
 		}
 	case "result":
 		content.Category = "message"
 		content.Action = "responding"
 		content.Phase = "completed"
-		content.Summary = "正在返回结果"
+		content.Summary = "Returning results"
 	case "command":
 		content.Category = "lifecycle"
 		content.Action = "starting"
 		content.Phase = "started"
-		content.Summary = "正在启动 Claude Code"
+		content.Summary = "Starting Claude Code"
 		eventType = "progress"
 	default:
 		if obj, ok := parseJSONObject(input.Log.Content); ok {
@@ -97,35 +97,35 @@ func applyClaudeObjectMapping(content *executor.UnifiedContent, obj map[string]a
 		content.Target = extractClaudeTarget(obj)
 		mapToolAction(content)
 		if content.Summary != "" {
-			content.Summary = strings.Replace(content.Summary, "正在", "已完成", 1)
+			content.Summary = strings.Replace(content.Summary, "Starting", "Completed", 1)
 		}
 	case "assistant", "message":
 		content.Category = "message"
 		content.Action = "responding"
-		content.Summary = "正在生成回复"
+		content.Summary = "Generating reply"
 	case "system":
 		content.Category = "progress"
 		if subtype == "init" {
 			content.Action = "thinking"
-			content.Summary = "正在初始化会话"
+			content.Summary = "Initializing session"
 		} else {
 			content.Action = "thinking"
-			content.Summary = "正在处理系统事件"
+			content.Summary = "Processing system events"
 		}
 	case "result":
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "任务执行完成"
+		content.Summary = "Task execution completed"
 	default:
 		if strings.Contains(strings.ToLower(content.Text), "search") {
 			content.Action = "searching"
 			content.Category = "progress"
-			content.Summary = "正在进行搜索"
+			content.Summary = "Searching"
 		} else {
 			content.Action = "thinking"
 			content.Category = "progress"
-			content.Summary = "正在深度思考"
+			content.Summary = "Thinking deeply"
 		}
 	}
 }
@@ -137,28 +137,28 @@ func mapToolAction(content *executor.UnifiedContent) {
 	switch {
 	case strings.Contains(name, "read"):
 		content.Action = "reading"
-		content.Summary = "正在读取文件"
+		content.Summary = "Reading file"
 		if target != "" {
-			content.Summary = fmt.Sprintf("正在读取 %s", target)
+			content.Summary = fmt.Sprintf("Reading %s", target)
 		}
 	case strings.Contains(name, "grep"), strings.Contains(name, "glob"), strings.Contains(name, "search"), strings.Contains(name, "webfetch"), strings.Contains(name, "websearch"):
 		content.Action = "searching"
-		content.Summary = "正在进行搜索"
+		content.Summary = "Searching"
 		if target != "" {
-			content.Summary = fmt.Sprintf("正在搜索：%s", target)
+			content.Summary = fmt.Sprintf("Searching: %s", target)
 		}
 	case strings.Contains(name, "edit"), strings.Contains(name, "write"), strings.Contains(name, "notebook"):
 		content.Action = "editing"
-		content.Summary = "正在修改代码"
+		content.Summary = "Modifying code"
 	case strings.Contains(name, "task") || strings.Contains(name, "plan"):
 		content.Action = "thinking"
 		content.Category = "progress"
-		content.Summary = "正在深度思考"
+		content.Summary = "Thinking deeply"
 	default:
 		content.Action = "tool_running"
-		content.Summary = "正在调用工具"
+		content.Summary = "Calling tool"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在调用工具：%s", content.ToolName)
+			content.Summary = fmt.Sprintf("Calling tool: %s", content.ToolName)
 		}
 	}
 }
@@ -259,20 +259,20 @@ func eventTypeForCategory(category string) string {
 func defaultSummary(content executor.UnifiedContent) string {
 	switch content.Action {
 	case "thinking":
-		return "正在深度思考"
+		return "Thinking deeply"
 	case "reading":
-		return "正在读取文件"
+		return "Reading file"
 	case "searching":
-		return "正在进行搜索"
+		return "Searching"
 	case "tool_running":
-		return "正在调用工具"
+		return "Calling tool"
 	case "responding":
-		return "正在生成回复"
+		return "Generating reply"
 	case "completed":
-		return "执行完成"
+		return "Execution completed"
 	case "failed":
-		return "执行失败"
+		return "Execution failed"
 	default:
-		return "处理中"
+		return "Processing"
 	}
 }

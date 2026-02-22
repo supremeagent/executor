@@ -101,7 +101,7 @@ export default function App() {
           attachStream(firstSession.id);
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : "加载会话列表失败");
+        setError(e instanceof Error ? e.message : "Failed to load session list");
       }
     }
 
@@ -120,7 +120,7 @@ export default function App() {
       const events = await listEvents(sessionId);
       setMessages((prev) => ({ ...prev, [sessionId]: events }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "加载会话消息失败");
+      setError(e instanceof Error ? e.message : "Failed to load session messages");
     } finally {
       setLoading(false);
     }
@@ -208,7 +208,7 @@ export default function App() {
       await loadSessionMessages(session.id);
       attachStream(session.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "创建会话失败");
+      setError(e instanceof Error ? e.message : "Failed to create session");
     } finally {
       setBusy(false);
     }
@@ -248,7 +248,7 @@ export default function App() {
       );
       attachStream(selectedSession.id);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "追加问题失败";
+      const message = e instanceof Error ? e.message : "Failed to append question";
       setError(message);
     } finally {
       setBusy(false);
@@ -262,7 +262,7 @@ export default function App() {
     try {
       await respondControl(selectedSession.id, { request_id: requestId, decision });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "审批操作失败");
+      setError(e instanceof Error ? e.message : "Failed to approve operation");
     } finally {
       setBusy(false);
     }
@@ -287,7 +287,7 @@ export default function App() {
       );
       streamRef.current?.close();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "中断失败");
+      setError(e instanceof Error ? e.message : "Failed to interrupt");
     } finally {
       setBusy(false);
     }
@@ -356,14 +356,14 @@ export default function App() {
       <main className="layout">
         <Card className="sidebar">
           <CardHeader>
-            <CardTitle>会话列表</CardTitle>
+            <CardTitle>Session List</CardTitle>
             <CardDescription>
-              点击任意会话可查看完整消息和实时输出
+              Click any session to view full messages and real-time output
             </CardDescription>
           </CardHeader>
           <CardContent className="list-wrap">
             {sessions.length === 0 ? (
-              <div className="empty">暂无会话，先在右侧发起一个需求。</div>
+              <div className="empty">No sessions yet. Start a request on the right.</div>
             ) : (
               sessions.map((session) => (
                 <button
@@ -392,14 +392,14 @@ export default function App() {
         <section className="content">
           <Card>
             <CardHeader>
-              <CardTitle>新建对话</CardTitle>
+              <CardTitle>New Chat</CardTitle>
               <CardDescription>
-                输入你的需求，创建一个新会话并立即开始流式监听
+                Enter your request to create a new session and start streaming immediately.
               </CardDescription>
             </CardHeader>
             <CardContent className="form-grid">
               <Textarea
-                placeholder="输入内容：可发起新会话，也可对当前会话追加问题"
+                placeholder="Input: you can start a new session or append to the current one"
                 value={draftMessage}
                 onChange={(e) => setDraftMessage(e.target.value)}
                 rows={4}
@@ -434,7 +434,7 @@ export default function App() {
                   onClick={() => void handleCreateSession()}
                   disabled={busy || !draftMessage.trim()}
                 >
-                  <Sparkles size={16} /> 发起会话
+                  <Sparkles size={16} /> Start Session
                 </Button>
                 <Button
                   variant="secondary"
@@ -445,14 +445,14 @@ export default function App() {
                     busy
                   }
                 >
-                  <MessageCircleMore size={16} /> 追加问题
+                  <MessageCircleMore size={16} /> Append Question
                 </Button>
                 <Button
                   variant="destructive"
                   onClick={() => void handleInterrupt()}
                   disabled={!selectedSession || busy}
                 >
-                  <CircleStop size={16} /> 中断
+                  <CircleStop size={16} /> Interrupt
                 </Button>
                 <Button
                   variant="outline"
@@ -461,7 +461,7 @@ export default function App() {
                   }
                   disabled={!selectedSession || loading}
                 >
-                  <Play size={16} /> 刷新
+                  <Play size={16} /> Refresh
                 </Button>
               </div>
             </CardContent>
@@ -470,14 +470,14 @@ export default function App() {
           <Card>
             <CardHeader>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <CardTitle>会话消息</CardTitle>
+                <CardTitle>Session Messages</CardTitle>
                 <div style={{ display: "flex", gap: 8 }}>
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => setFilterPanelOpen((v) => !v)}
                   >
-                    {filterPanelOpen ? "收起筛选" : "展开筛选"}
+                    {filterPanelOpen ? "Collapse filters" : "Expand filters"}
                   </Button>
                   <Button
                     size="sm"
@@ -485,14 +485,14 @@ export default function App() {
                     onClick={clearFilters}
                     disabled={filters.types.length === 0 && filters.categories.length === 0 && filters.actions.length === 0}
                   >
-                    清空筛选
+                    Clear Filters
                   </Button>
                 </div>
               </div>
               <CardDescription>
                 {selectedSession
-                  ? `当前会话：${selectedSession.id}`
-                  : "请从左侧选择会话，或先创建一个新会话"}
+                  ? `Current Session: ${selectedSession.id}`
+                  : "Please select a session from the left or create a new one"}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -501,7 +501,7 @@ export default function App() {
               {filterPanelOpen ? (
                 <div style={{ marginBottom: 12, display: "grid", gap: 8 }}>
                   <div>
-                    <small>类型（type，多选）</small>
+                    <small>Type (multi-select)</small>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
                       {filterOptions.types.map((type) => (
                         <label key={type} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -517,7 +517,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <small>类别（category，多选）</small>
+                    <small>Category (multi-select)</small>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
                       {filterOptions.categories.map((category) => (
                         <label key={category} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -533,7 +533,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <small>动作（action，多选）</small>
+                    <small>Action (multi-select)</small>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
                       {filterOptions.actions.map((action) => (
                         <label key={action} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -552,11 +552,11 @@ export default function App() {
 
               <div className="message-panel">
                 {loading ? (
-                  <div className="empty">加载中...</div>
+                  <div className="empty">Loading...</div>
                 ) : activeMessages.length === 0 ? (
-                  <div className="empty">当前会话暂无消息</div>
+                  <div className="empty">No messages in current session yet</div>
                 ) : filteredMessages.length === 0 ? (
-                  <div className="empty">没有符合当前筛选条件的消息</div>
+                  <div className="empty">No messages match the current filters</div>
                 ) : (
                   filteredMessages.map((event, idx) => {
                     const view = buildEventViewModel(event);
@@ -628,7 +628,7 @@ export default function App() {
           onClick={() => void handleCreateSession()}
           disabled={busy || !draftMessage.trim()}
         >
-          <SendHorizontal size={14} /> 快速发送
+          <SendHorizontal size={14} /> Quick Send
         </Button>
       </footer>
     </div>

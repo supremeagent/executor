@@ -26,31 +26,31 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "执行完成"
+		content.Summary = "Execution completed"
 		eventType = "done"
 
 	case "stderr", "error":
 		content.Category = "error"
 		content.Action = "failed"
 		content.Phase = "failed"
-		content.Summary = "执行失败"
+		content.Summary = "Execution failed"
 		eventType = "error"
 
 	case "command":
 		content.Category = "lifecycle"
 		content.Action = "starting"
 		content.Phase = "started"
-		content.Summary = "正在启动 Droid"
+		content.Summary = "Starting Droid"
 		eventType = "progress"
 
 	case "droid_system":
 		content.Category = "lifecycle"
 		content.Action = "starting"
 		content.Phase = "started"
-		content.Summary = "正在初始化会话"
+		content.Summary = "Initializing session"
 		eventType = "progress"
 		if evt, ok := parseDroidEvent(input.Log.Content); ok && evt.Model != "" {
-			content.Summary = fmt.Sprintf("正在初始化会话，模型：%s", evt.Model)
+			content.Summary = fmt.Sprintf("Initializing session, model: %s", evt.Model)
 		}
 
 	case "droid_message":
@@ -59,18 +59,18 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 			case "assistant":
 				content.Category = "message"
 				content.Action = "responding"
-				content.Summary = "正在生成回复"
+				content.Summary = "Generating reply"
 				content.Text = evt.Text
 			case "user":
 				content.Category = "message"
 				content.Action = "responding"
-				content.Summary = "用户消息"
+				content.Summary = "User message"
 				content.Text = evt.Text
 				eventType = "progress"
 			default:
 				content.Category = "message"
 				content.Action = "responding"
-				content.Summary = "消息"
+				content.Summary = "Message"
 				content.Text = evt.Text
 			}
 		}
@@ -103,7 +103,7 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "任务执行完成"
+		content.Summary = "Task execution completed"
 		eventType = "done"
 		if evt, ok := parseDroidEvent(input.Log.Content); ok && evt.FinalText != "" {
 			content.Text = evt.FinalText
@@ -112,7 +112,7 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 	default:
 		content.Category = "progress"
 		content.Action = "thinking"
-		content.Summary = "正在处理中"
+		content.Summary = "Processing"
 		eventType = "progress"
 	}
 
@@ -133,34 +133,34 @@ func applyDroidToolMapping(content *executor.UnifiedContent, toolName string) {
 	switch {
 	case name == "read" || name == "ls":
 		content.Action = "reading"
-		content.Summary = "正在读取文件"
+		content.Summary = "Reading file"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在读取 %s", content.ToolName)
+			content.Summary = fmt.Sprintf("Reading %s", content.ToolName)
 		}
 	case name == "grep" || name == "glob" || strings.Contains(name, "search") || strings.Contains(name, "websearch"):
 		content.Action = "searching"
-		content.Summary = "正在进行搜索"
+		content.Summary = "Searching"
 	case name == "edit" || name == "multiedit" || name == "create" || name == "applypatch":
 		content.Action = "editing"
-		content.Summary = "正在修改代码"
+		content.Summary = "Modifying code"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在编辑文件")
+			content.Summary = fmt.Sprintf("Editing file")
 		}
 	case name == "execute":
 		content.Action = "tool_running"
-		content.Summary = "正在执行命令"
+		content.Summary = "Executing command"
 	case name == "todowrite":
 		content.Category = "progress"
 		content.Action = "thinking"
-		content.Summary = "正在更新任务列表"
+		content.Summary = "Updating task list"
 	case strings.Contains(name, "fetch") || strings.Contains(name, "url"):
 		content.Action = "searching"
-		content.Summary = "正在获取网页"
+		content.Summary = "Fetching webpage"
 	default:
 		content.Action = "tool_running"
-		content.Summary = "正在调用工具"
+		content.Summary = "Calling tool"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在调用工具：%s", content.ToolName)
+			content.Summary = fmt.Sprintf("Calling tool: %s", content.ToolName)
 		}
 	}
 }
@@ -193,24 +193,24 @@ func parseDroidEvent(raw any) (DroidEvent, bool) {
 func defaultSummary(content executor.UnifiedContent) string {
 	switch content.Action {
 	case "thinking":
-		return "正在深度思考"
+		return "Thinking deeply"
 	case "reading":
-		return "正在读取文件"
+		return "Reading file"
 	case "searching":
-		return "正在进行搜索"
+		return "Searching"
 	case "editing":
-		return "正在修改代码"
+		return "Modifying code"
 	case "tool_running":
-		return "正在调用工具"
+		return "Calling tool"
 	case "responding":
-		return "正在生成回复"
+		return "Generating reply"
 	case "completed":
-		return "执行完成"
+		return "Execution completed"
 	case "failed":
-		return "执行失败"
+		return "Execution failed"
 	case "starting":
-		return "正在启动"
+		return "Starting"
 	default:
-		return "处理中"
+		return "Processing"
 	}
 }

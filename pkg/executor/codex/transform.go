@@ -24,32 +24,32 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "执行完成"
+		content.Summary = "Execution completed"
 		eventType = "done"
 	case "stderr", "error":
 		content.Category = "error"
 		content.Action = "failed"
 		content.Phase = "failed"
-		content.Summary = "执行失败"
+		content.Summary = "Execution failed"
 		eventType = "error"
 	case "control_request":
 		content.Category = "approval"
 		content.Action = "approval_required"
 		content.Phase = "requested"
-		content.Summary = "等待用户审批"
+		content.Summary = "Waiting for user approval"
 		eventType = "approval"
 		if obj, ok := parseJSONObject(input.Log.Content); ok {
 			content.RequestID, _ = obj["request_id"].(string)
 			content.ToolName = detectToolFromControl(obj)
 			if content.ToolName != "" {
-				content.Summary = fmt.Sprintf("等待审批：%s", content.ToolName)
+				content.Summary = fmt.Sprintf("Waiting for approval: %s", content.ToolName)
 			}
 		}
 	case "init":
 		content.Category = "lifecycle"
 		content.Action = "starting"
 		content.Phase = "started"
-		content.Summary = "正在启动 Codex"
+		content.Summary = "Starting Codex"
 		eventType = "progress"
 	default:
 		if strings.HasPrefix(input.Log.Type, "codex/event/") {
@@ -101,43 +101,43 @@ func applyCodexEventMapping(content *executor.UnifiedContent, logType string, ra
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "任务执行完成"
+		content.Summary = "Task execution completed"
 	case strings.Contains(msgType, "task_started"):
 		content.Action = "thinking"
-		content.Summary = "正在分析任务"
+		content.Summary = "Analyzing task"
 	case strings.Contains(msgType, "mcp_startup"):
 		content.Action = "starting"
-		content.Summary = "正在初始化工具"
+		content.Summary = "Initializing tool"
 		if content.Target != "" {
-			content.Summary = fmt.Sprintf("正在初始化工具：%s", content.Target)
+			content.Summary = fmt.Sprintf("Initializing tool: %s", content.Target)
 		}
 		if content.Status != "" {
-			content.Summary = fmt.Sprintf("工具 %s 状态：%s", content.Target, content.Status)
+			content.Summary = fmt.Sprintf("Tool %s status: %s", content.Target, content.Status)
 		}
 	case strings.Contains(msgType, "search"):
 		content.Action = "searching"
-		content.Summary = "正在进行搜索"
+		content.Summary = "Searching"
 	case strings.Contains(msgType, "read"):
 		content.Action = "reading"
-		content.Summary = "正在读取文件"
+		content.Summary = "Reading file"
 	case strings.Contains(msgType, "exec_command"):
 		content.Category = "tool"
 		content.Action = "tool_running"
 		content.ToolName = fallback(content.ToolName, "bash")
-		content.Summary = "正在执行命令"
+		content.Summary = "Executing command"
 		if content.Target != "" {
-			content.Summary = fmt.Sprintf("正在执行命令：%s", content.Target)
+			content.Summary = fmt.Sprintf("Executing command: %s", content.Target)
 		}
 	case strings.Contains(msgType, "patch") || strings.Contains(msgType, "edit") || strings.Contains(msgType, "apply"):
 		content.Category = "tool"
 		content.Action = "editing"
 		content.ToolName = fallback(content.ToolName, "edit")
-		content.Summary = "正在修改代码"
+		content.Summary = "Modifying code"
 	case strings.Contains(msgType, "agent_message"):
 		content.Action = "responding"
-		content.Summary = "正在组织回复"
+		content.Summary = "Organizing reply"
 	default:
-		content.Summary = fmt.Sprintf("处理中：%s", msgType)
+		content.Summary = fmt.Sprintf("Processing: %s", msgType)
 	}
 }
 
@@ -199,20 +199,20 @@ func fallback(v, d string) string {
 func defaultSummary(content executor.UnifiedContent) string {
 	switch content.Action {
 	case "thinking":
-		return "正在深度思考"
+		return "Thinking deeply"
 	case "reading":
-		return "正在读取文件"
+		return "Reading file"
 	case "searching":
-		return "正在进行搜索"
+		return "Searching"
 	case "tool_running":
-		return "正在调用工具"
+		return "Calling tool"
 	case "responding":
-		return "正在生成回复"
+		return "Generating reply"
 	case "completed":
-		return "执行完成"
+		return "Execution completed"
 	case "failed":
-		return "执行失败"
+		return "Execution failed"
 	default:
-		return "处理中"
+		return "Processing"
 	}
 }

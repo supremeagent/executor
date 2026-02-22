@@ -254,16 +254,16 @@ func TestDefaultSummary(t *testing.T) {
 		action   string
 		expected string
 	}{
-		{"thinking", "正在深度思考"},
-		{"reading", "正在读取文件"},
-		{"searching", "正在进行搜索"},
-		{"editing", "正在修改代码"},
-		{"tool_running", "正在调用工具"},
-		{"responding", "正在生成回复"},
-		{"completed", "执行完成"},
-		{"failed", "执行失败"},
-		{"starting", "正在启动"},
-		{"unknown_action", "处理中"},
+		{"thinking", "Thinking deeply"},
+		{"reading", "Reading file"},
+		{"searching", "Searching"},
+		{"editing", "Modifying code"},
+		{"tool_running", "Calling tool"},
+		{"responding", "Generating reply"},
+		{"completed", "Execution completed"},
+		{"failed", "Execution failed"},
+		{"starting", "Starting"},
+		{"unknown_action", "Processing"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.action, func(t *testing.T) {

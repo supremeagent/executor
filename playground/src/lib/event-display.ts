@@ -39,12 +39,12 @@ export function buildEventViewModel(event: EventItem): EventViewModel {
   const headline = unified.summary || defaultHeadline(unified)
   const details: string[] = []
 
-  if (unified.category) details.push(`类别: ${unified.category}`)
-  if (unified.action) details.push(`动作: ${unified.action}`)
-  if (unified.phase) details.push(`阶段: ${unified.phase}`)
-  if (unified.tool_name) details.push(`工具: ${unified.tool_name}`)
-  if (unified.target) details.push(`目标: ${unified.target}`)
-  if (unified.status) details.push(`状态: ${unified.status}`)
+  if (unified.category) details.push(`Category: ${unified.category}`)
+  if (unified.action) details.push(`Action: ${unified.action}`)
+  if (unified.phase) details.push(`Phase: ${unified.phase}`)
+  if (unified.tool_name) details.push(`Tool: ${unified.tool_name}`)
+  if (unified.target) details.push(`Target: ${unified.target}`)
+  if (unified.status) details.push(`Status: ${unified.status}`)
 
   const rawCandidate = unified.text || summarizeContent(unified.raw)
 
@@ -59,26 +59,26 @@ export function buildEventViewModel(event: EventItem): EventViewModel {
 function defaultHeadline(content: UnifiedEventContent): string {
   switch (content.action) {
     case 'starting':
-      return '正在初始化执行环境'
+      return 'Initializing Execution Environment'
     case 'thinking':
-      return '正在深度思考'
+      return 'Thinking Deeply'
     case 'reading':
-      return content.target ? `正在读取 ${content.target}` : '正在读取文件'
+      return content.target ? `Reading ${content.target}` : 'Reading File'
     case 'searching':
-      return content.target ? `正在搜索：${content.target}` : '正在进行搜索'
+      return content.target ? `Searching: ${content.target}` : 'Searching'
     case 'tool_running':
-      return content.tool_name ? `正在调用工具：${content.tool_name}` : '正在调用工具'
+      return content.tool_name ? `Calling Tool: ${content.tool_name}` : 'Calling Tool'
     case 'editing':
-      return '正在修改代码'
+      return 'Modifying Code'
     case 'approval_required':
-      return '等待你的审批'
+      return 'Waiting for Your Approval'
     case 'responding':
-      return '正在生成回复'
+      return 'Generating Reply'
     case 'completed':
-      return '执行完成'
+      return 'Execution Completed'
     case 'failed':
-      return '执行失败'
+      return 'Execution Failed'
     default:
-      return '处理中'
+      return 'Processing'
   }
 }

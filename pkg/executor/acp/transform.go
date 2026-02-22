@@ -26,42 +26,42 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "执行完成"
+		content.Summary = "Execution completed"
 		eventType = "done"
 
 	case "acp_done":
 		content.Category = "done"
 		content.Action = "completed"
 		content.Phase = "completed"
-		content.Summary = "执行完成"
+		content.Summary = "Execution completed"
 		eventType = "done"
 
 	case "stderr", "error":
 		content.Category = "error"
 		content.Action = "failed"
 		content.Phase = "failed"
-		content.Summary = "执行失败"
+		content.Summary = "Execution failed"
 		eventType = "error"
 
 	case "command":
 		content.Category = "lifecycle"
 		content.Action = "starting"
 		content.Phase = "started"
-		content.Summary = "正在启动执行器"
+		content.Summary = "Starting executor"
 		eventType = "progress"
 
 	case "session_start":
 		content.Category = "lifecycle"
 		content.Action = "starting"
 		content.Phase = "started"
-		content.Summary = "会话已启动"
+		content.Summary = "Session started"
 		eventType = "progress"
 
 	case "control_request":
 		content.Category = "approval"
 		content.Action = "approval_required"
 		content.Phase = "requested"
-		content.Summary = "等待用户审批"
+		content.Summary = "Waiting for user approval"
 		eventType = "approval"
 		if obj, ok := parseJSONObject(input.Log.Content); ok {
 			if reqID, ok := obj["request_id"].(string); ok {
@@ -76,7 +76,7 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 				}
 			}
 			if content.ToolName != "" {
-				content.Summary = fmt.Sprintf("等待审批：%s", content.ToolName)
+				content.Summary = fmt.Sprintf("Waiting for approval: %s", content.ToolName)
 			}
 		}
 
@@ -84,7 +84,7 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 	case string(EventTypeMessage):
 		content.Category = "message"
 		content.Action = "responding"
-		content.Summary = "正在生成回复"
+		content.Summary = "Generating reply"
 		if obj, ok := parseJSONObject(input.Log.Content); ok {
 			if txt := extractTextFromACPContent(obj); txt != "" {
 				content.Text = txt
@@ -94,7 +94,7 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 	case string(EventTypeThought):
 		content.Category = "progress"
 		content.Action = "thinking"
-		content.Summary = "正在深度思考"
+		content.Summary = "Thinking deeply"
 		eventType = "progress"
 
 	case string(EventTypeToolCall), string(EventTypeToolUpdate):
@@ -104,13 +104,13 @@ func EventTransformer(input executor.TransformInput) executor.Event {
 	case string(EventTypePlan):
 		content.Category = "progress"
 		content.Action = "thinking"
-		content.Summary = "正在制定计划"
+		content.Summary = "Making a plan"
 		eventType = "progress"
 
 	default:
 		content.Category = "progress"
 		content.Action = "thinking"
-		content.Summary = "正在处理中"
+		content.Summary = "Processing"
 		eventType = "progress"
 	}
 
@@ -132,7 +132,7 @@ func applyACPToolMapping(content *executor.UnifiedContent, raw any) {
 	obj, ok := parseJSONObject(raw)
 	if !ok {
 		content.Action = "tool_running"
-		content.Summary = "正在调用工具"
+		content.Summary = "Calling tool"
 		return
 	}
 
@@ -174,43 +174,43 @@ func mapACPToolKind(content *executor.UnifiedContent, kind ToolKind) {
 	switch kind {
 	case ToolKindRead:
 		content.Action = "reading"
-		content.Summary = "正在读取文件"
+		content.Summary = "Reading file"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在读取 %s", content.ToolName)
+			content.Summary = fmt.Sprintf("Reading %s", content.ToolName)
 		}
 	case ToolKindEdit:
 		content.Action = "editing"
-		content.Summary = "正在修改代码"
+		content.Summary = "Modifying code"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在编辑 %s", content.ToolName)
+			content.Summary = fmt.Sprintf("Editing %s", content.ToolName)
 		}
 	case ToolKindExecute:
 		content.Action = "tool_running"
-		content.Summary = "正在执行命令"
+		content.Summary = "Executing command"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在执行：%s", content.ToolName)
+			content.Summary = fmt.Sprintf("Executing: %s", content.ToolName)
 		}
 	case ToolKindSearch:
 		content.Action = "searching"
-		content.Summary = "正在进行搜索"
+		content.Summary = "Searching"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在搜索：%s", content.ToolName)
+			content.Summary = fmt.Sprintf("Searching: %s", content.ToolName)
 		}
 	case ToolKindFetch:
 		content.Action = "searching"
-		content.Summary = "正在获取网页"
+		content.Summary = "Fetching webpage"
 	case ToolKindDelete:
 		content.Action = "editing"
-		content.Summary = "正在删除文件"
+		content.Summary = "Deleting file"
 	case ToolKindThink:
 		content.Category = "progress"
 		content.Action = "thinking"
-		content.Summary = "正在深度思考"
+		content.Summary = "Thinking deeply"
 	default:
 		content.Action = "tool_running"
-		content.Summary = "正在调用工具"
+		content.Summary = "Calling tool"
 		if content.ToolName != "" {
-			content.Summary = fmt.Sprintf("正在调用工具：%s", content.ToolName)
+			content.Summary = fmt.Sprintf("Calling tool: %s", content.ToolName)
 		}
 	}
 }
@@ -252,24 +252,24 @@ func parseJSONObject(v any) (map[string]any, bool) {
 func defaultSummary(content executor.UnifiedContent) string {
 	switch content.Action {
 	case "thinking":
-		return "正在深度思考"
+		return "Thinking deeply"
 	case "reading":
-		return "正在读取文件"
+		return "Reading file"
 	case "searching":
-		return "正在进行搜索"
+		return "Searching"
 	case "editing":
-		return "正在修改代码"
+		return "Modifying code"
 	case "tool_running":
-		return "正在调用工具"
+		return "Calling tool"
 	case "responding":
-		return "正在生成回复"
+		return "Generating reply"
 	case "completed":
-		return "执行完成"
+		return "Execution completed"
 	case "failed":
-		return "执行失败"
+		return "Execution failed"
 	case "starting":
-		return "正在启动"
+		return "Starting"
 	default:
-		return "处理中"
+		return "Processing"
 	}
 }
