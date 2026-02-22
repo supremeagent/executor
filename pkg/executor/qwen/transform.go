@@ -1,4 +1,4 @@
-package claude
+package qwen
 
 import (
 	"encoding/json"

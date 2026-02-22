@@ -13,6 +13,10 @@ type ExecutorType string
 const (
 	ExecutorClaudeCode ExecutorType = "claude_code"
 	ExecutorCodex      ExecutorType = "codex"
+	ExecutorDroid      ExecutorType = "droid"
+	ExecutorGemini     ExecutorType = "gemini"
+	ExecutorQwen       ExecutorType = "qwen"
+	ExecutorCopilot    ExecutorType = "copilot"
 )
 
 // ExecuteRequest defines task startup options.
@@ -36,6 +40,31 @@ type ExecuteResponse struct {
 // ContinueRequest defines a resume/continue payload.
 type ContinueRequest struct {
 	Message string `json:"message"`
+}
+
+type ControlDecision string
+
+const (
+	ControlDecisionApprove ControlDecision = "approve"
+	ControlDecisionDeny    ControlDecision = "deny"
+)
+
+// ControlRequest describes a pending executor control/approval action.
+type ControlRequest struct {
+	RequestID string    `json:"request_id"`
+	Executor  string    `json:"executor"`
+	Type      string    `json:"type"`
+	ToolName  string    `json:"tool_name,omitempty"`
+	Message   string    `json:"message,omitempty"`
+	Payload   any       `json:"payload,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// ControlResponse is used to answer a pending ControlRequest.
+type ControlResponse struct {
+	RequestID string          `json:"request_id"`
+	Decision  ControlDecision `json:"decision"`
+	Reason    string          `json:"reason,omitempty"`
 }
 
 type SessionStatus string
@@ -98,7 +127,14 @@ type UnifiedContent struct {
 	Source     string `json:"source"`
 	SourceType string `json:"source_type"`
 	Category   string `json:"category"`
+	Action     string `json:"action,omitempty"`
+	Phase      string `json:"phase,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	Target     string `json:"target,omitempty"`
 	Text       string `json:"text,omitempty"`
+	ToolName   string `json:"tool_name,omitempty"`
+	RequestID  string `json:"request_id,omitempty"`
+	Status     string `json:"status,omitempty"`
 	Raw        any    `json:"raw,omitempty"`
 }
 

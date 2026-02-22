@@ -4,12 +4,20 @@ import (
 	"github.com/supremeagent/executor/pkg/executor"
 	"github.com/supremeagent/executor/pkg/executor/claude"
 	"github.com/supremeagent/executor/pkg/executor/codex"
+	"github.com/supremeagent/executor/pkg/executor/copilot"
+	"github.com/supremeagent/executor/pkg/executor/droid"
+	"github.com/supremeagent/executor/pkg/executor/gemini"
+	"github.com/supremeagent/executor/pkg/executor/qwen"
 )
 
 func defaultEventTransformers() map[string]executor.EventTransformer {
 	return map[string]executor.EventTransformer{
 		string(executor.ExecutorCodex):      codex.EventTransformer,
 		string(executor.ExecutorClaudeCode): claude.EventTransformer,
+		string(executor.ExecutorQwen):       qwen.EventTransformer,
+		string(executor.ExecutorDroid):      droid.EventTransformer,
+		string(executor.ExecutorCopilot):    copilot.EventTransformer,
+		string(executor.ExecutorGemini):     gemini.EventTransformer,
 	}
 }
 

@@ -2,7 +2,9 @@ package sdk
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -13,11 +15,16 @@ import (
 	"github.com/supremeagent/executor/pkg/executor"
 	"github.com/supremeagent/executor/pkg/executor/claude"
 	"github.com/supremeagent/executor/pkg/executor/codex"
+	"github.com/supremeagent/executor/pkg/executor/copilot"
+	"github.com/supremeagent/executor/pkg/executor/droid"
+	"github.com/supremeagent/executor/pkg/executor/gemini"
+	"github.com/supremeagent/executor/pkg/executor/qwen"
 	"github.com/supremeagent/executor/pkg/store"
 	"github.com/supremeagent/executor/pkg/streaming"
 )
 
 var ErrPromptRequired = errors.New("prompt is required")
+var ErrResumeUnavailable = errors.New("resume state unavailable for this session")
 
 // ClientOptions configures SDK client behavior.
 type ClientOptions struct {
@@ -38,17 +45,33 @@ type Client struct {
 
 	sessionsMu sync.RWMutex
 	sessions   map[string]executor.Session
+	requests   map[string]executor.ExecuteRequest
+	resumeInfo map[string]sessionResumeInfo
+}
+
+type sessionResumeInfo struct {
+	ClaudeSessionID   string
+	CodexConversation string
+	CodexRolloutPath  string
 }
 
 type storeCloser interface {
 	Close()
 }
 
+func RegisterAllExecutors(registry *executor.Registry) {
+	registry.Register(string(executor.ExecutorClaudeCode), claude.NewFactory())
+	registry.Register(string(executor.ExecutorCodex), codex.NewFactory())
+	registry.Register(string(executor.ExecutorQwen), qwen.NewFactory())
+	registry.Register(string(executor.ExecutorDroid), droid.NewFactory())
+	registry.Register(string(executor.ExecutorCopilot), copilot.NewFactory())
+	registry.Register(string(executor.ExecutorGemini), gemini.NewFactory())
+}
+
 // New creates an SDK client with built-in executors registered.
 func New() *Client {
 	registry := executor.NewRegistry()
-	registry.Register(string(executor.ExecutorClaudeCode), claude.NewFactory())
-	registry.Register(string(executor.ExecutorCodex), codex.NewFactory())
+	RegisterAllExecutors(registry)
 
 	return NewWithOptions(ClientOptions{
 		Registry:      registry,
@@ -61,6 +84,7 @@ func New() *Client {
 func NewWithOptions(opts ClientOptions) *Client {
 	if opts.Registry == nil {
 		opts.Registry = executor.NewRegistry()
+		RegisterAllExecutors(opts.Registry)
 	}
 	if opts.StreamManager == nil {
 		opts.StreamManager = streaming.NewManager()
@@ -83,6 +107,8 @@ func NewWithOptions(opts ClientOptions) *Client {
 		hooks:      opts.Hooks,
 		transforms: transforms,
 		sessions:   make(map[string]executor.Session),
+		requests:   make(map[string]executor.ExecuteRequest),
+		resumeInfo: make(map[string]sessionResumeInfo),
 	}
 }
 
@@ -111,6 +137,7 @@ func (c *Client) Execute(ctx context.Context, req executor.ExecuteRequest) (exec
 		Model:                      req.Model,
 		Plan:                       req.Plan,
 		DangerouslySkipPermissions: !req.Plan,
+		Approvals:                  req.Plan || (req.AskForApproval != "" && req.AskForApproval != "never"),
 		Sandbox:                    req.Sandbox,
 		Env:                        req.Env,
 		AskForApproval:             req.AskForApproval,
@@ -140,6 +167,7 @@ func (c *Client) Execute(ctx context.Context, req executor.ExecuteRequest) (exec
 		CreatedAt: now,
 		UpdatedAt: now,
 	})
+	c.setSessionRequest(sessionID, req)
 
 	go c.pipeSessionLogs(sessionID, string(req.Executor), exec)
 
@@ -160,6 +188,7 @@ func (c *Client) pipeSessionLogs(sessionID, executorName string, exec executor.E
 	}()
 
 	for logEntry := range exec.Logs() {
+		c.captureResumeState(sessionID, executorName, logEntry)
 		evt := c.transformEvent(sessionID, executorName, logEntry)
 		storedEvt, err := c.store.Append(context.Background(), evt)
 		if err != nil {
@@ -199,16 +228,59 @@ func (c *Client) PauseTask(sessionID string) error {
 
 // ContinueTask continues a paused/running task with a message.
 func (c *Client) ContinueTask(ctx context.Context, sessionID string, message string) error {
-	exec, ok := c.registry.GetSession(sessionID)
-	if !ok {
-		return executor.ErrSessionNotFound
-	}
 	if message == "" {
 		message = "continue"
 	}
-	if err := exec.SendMessage(ctx, message); err != nil {
+
+	if exec, ok := c.registry.GetSession(sessionID); ok {
+		if err := exec.SendMessage(ctx, message); err != nil {
+			return err
+		}
+		c.updateSessionStatus(sessionID, executor.SessionStatusRunning)
+		return nil
+	}
+
+	req, resume, ok := c.getSessionRuntime(sessionID)
+	if !ok {
+		return executor.ErrSessionNotFound
+	}
+	opts := executor.Options{
+		WorkingDir:                 req.WorkingDir,
+		Model:                      req.Model,
+		Plan:                       req.Plan,
+		DangerouslySkipPermissions: !req.Plan,
+		Approvals:                  req.Plan || (req.AskForApproval != "" && req.AskForApproval != "never"),
+		Sandbox:                    req.Sandbox,
+		Env:                        req.Env,
+		AskForApproval:             req.AskForApproval,
+	}
+
+	switch req.Executor {
+	case executor.ExecutorClaudeCode:
+		if resume.ClaudeSessionID == "" {
+			return ErrResumeUnavailable
+		}
+		opts.ResumeSessionID = resume.ClaudeSessionID
+	case executor.ExecutorCodex:
+		if resume.CodexConversation == "" && resume.CodexRolloutPath == "" {
+			return ErrResumeUnavailable
+		}
+		opts.ResumeSessionID = resume.CodexConversation
+		opts.ResumePath = resume.CodexRolloutPath
+	default:
+		return fmt.Errorf("resume unsupported for executor %s", req.Executor)
+	}
+
+	exec, err := c.registry.CreateSession(sessionID, string(req.Executor), opts)
+	if err != nil {
 		return err
 	}
+	if err := exec.Start(ctx, message, opts); err != nil {
+		_ = exec.Close()
+		c.registry.RemoveSession(sessionID)
+		return err
+	}
+	go c.pipeSessionLogs(sessionID, string(req.Executor), exec)
 
 	c.updateSessionStatus(sessionID, executor.SessionStatusRunning)
 	return nil
@@ -217,6 +289,15 @@ func (c *Client) ContinueTask(ctx context.Context, sessionID string, message str
 // ResumeTask is an alias for ContinueTask.
 func (c *Client) ResumeTask(ctx context.Context, sessionID string, message string) error {
 	return c.ContinueTask(ctx, sessionID, message)
+}
+
+// RespondControl answers executor approval/control requests.
+func (c *Client) RespondControl(ctx context.Context, sessionID string, response executor.ControlResponse) error {
+	exec, ok := c.registry.GetSession(sessionID)
+	if !ok {
+		return executor.ErrSessionNotFound
+	}
+	return exec.RespondControl(ctx, response)
 }
 
 // SessionRunning reports whether a session is still active.
@@ -314,6 +395,59 @@ func (c *Client) upsertSession(session executor.Session) {
 	c.sessions[session.SessionID] = session
 }
 
+func (c *Client) setSessionRequest(sessionID string, req executor.ExecuteRequest) {
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
+	c.requests[sessionID] = req
+}
+
+func (c *Client) getSessionRuntime(sessionID string) (executor.ExecuteRequest, sessionResumeInfo, bool) {
+	c.sessionsMu.RLock()
+	defer c.sessionsMu.RUnlock()
+	req, ok := c.requests[sessionID]
+	if !ok {
+		return executor.ExecuteRequest{}, sessionResumeInfo{}, false
+	}
+	return req, c.resumeInfo[sessionID], true
+}
+
+func (c *Client) captureResumeState(sessionID, executorName string, logEntry executor.Log) {
+	c.sessionsMu.Lock()
+	defer c.sessionsMu.Unlock()
+
+	resume := c.resumeInfo[sessionID]
+	switch executorName {
+	case string(executor.ExecutorClaudeCode):
+		if obj, ok := decodeJSONObject(logEntry.Content); ok {
+			if sid, ok := obj["session_id"].(string); ok && sid != "" {
+				resume.ClaudeSessionID = sid
+			}
+		} else if text := executor.StringifyContent(logEntry.Content); text != "" {
+			if obj, ok := decodeJSONObjectFromLine(text); ok {
+				if sid, ok := obj["session_id"].(string); ok && sid != "" {
+					resume.ClaudeSessionID = sid
+				}
+			}
+		}
+	case string(executor.ExecutorCodex):
+		if obj, ok := decodeJSONObject(logEntry.Content); ok {
+			if result, ok := obj["result"].(map[string]any); ok {
+				if conv, ok := result["conversationId"].(string); ok && conv != "" {
+					resume.CodexConversation = conv
+				}
+				if rollout, ok := result["rolloutPath"].(string); ok && rollout != "" {
+					resume.CodexRolloutPath = rollout
+				}
+			}
+			if conv, ok := obj["conversationId"].(string); ok && conv != "" {
+				resume.CodexConversation = conv
+			}
+		}
+	}
+
+	c.resumeInfo[sessionID] = resume
+}
+
 func truncateTitle(text string, limit int) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" || limit <= 0 {
@@ -326,6 +460,37 @@ func truncateTitle(text string, limit int) string {
 	}
 
 	return string(runes[:limit])
+}
+
+func decodeJSONObject(v any) (map[string]any, bool) {
+	switch val := v.(type) {
+	case map[string]any:
+		return val, true
+	case json.RawMessage:
+		var out map[string]any
+		if err := json.Unmarshal(val, &out); err == nil {
+			return out, true
+		}
+	case []byte:
+		var out map[string]any
+		if err := json.Unmarshal(val, &out); err == nil {
+			return out, true
+		}
+	case string:
+		var out map[string]any
+		if err := json.Unmarshal([]byte(val), &out); err == nil {
+			return out, true
+		}
+	}
+	return nil, false
+}
+
+func decodeJSONObjectFromLine(line string) (map[string]any, bool) {
+	start := strings.Index(line, "{")
+	if start < 0 {
+		return nil, false
+	}
+	return decodeJSONObject(line[start:])
 }
 
 // Subscribe streams session events via channel.
@@ -425,4 +590,18 @@ func (c *Client) Shutdown() {
 	if closer, ok := c.store.(storeCloser); ok {
 		closer.Close()
 	}
+}
+
+type ExecutorMeta struct {
+	Name string `json:"name"`
+}
+
+// Executors returns a list of meta information for all registered executors.
+func (c *Client) Executors() []ExecutorMeta {
+	names := c.registry.Executors()
+	meta := make([]ExecutorMeta, 0, len(names))
+	for _, name := range names {
+		meta = append(meta, ExecutorMeta{Name: name})
+	}
+	return meta
 }

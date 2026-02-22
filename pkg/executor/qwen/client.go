@@ -1,4 +1,4 @@
-package claude
+package qwen
 
 import (
 	"bufio"
@@ -14,7 +14,7 @@ import (
 	"github.com/supremeagent/executor/pkg/executor"
 )
 
-// Client implements the Executor interface for Claude Code
+// Client implements the Executor interface for Qwen Code
 type Client struct {
 	cmd        *exec.Cmd
 	ptyFile    *os.File
@@ -27,7 +27,7 @@ type Client struct {
 	commandRun func(name string, arg ...string) *exec.Cmd
 }
 
-// NewClient creates a new Claude Code client
+// NewClient creates a new Qwen Code client
 func NewClient() *Client {
 	return &Client{
 		logsChan:   make(chan executor.Log, 100),
@@ -37,9 +37,9 @@ func NewClient() *Client {
 	}
 }
 
-// Start starts the Claude Code executor with the given prompt
+// Start starts the Qwen Code executor with the given prompt
 func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options) error {
-	args := []string{"-y", "@anthropic-ai/claude-code@latest", "--print", prompt, "--output-format", "stream-json", "--verbose"}
+	args := []string{"-y", "--package", "@qwen-code/qwen-code@latest", "qwen", prompt, "--output-format", "stream-json"}
 
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
@@ -50,17 +50,17 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 	if opts.Plan {
 		args = append(args, "--plan")
 	}
-	if opts.DangerouslySkipPermissions {
-		args = append(args, "--dangerously-skip-permissions")
-	} else if opts.Plan || opts.Approvals {
+	if opts.Yolo || opts.DangerouslySkipPermissions {
+		args = append(args, "--yolo")
+	} else {
 		args = append(args, "--permission-prompt-tool", "stdio", "--input-format", "stream-json")
 	}
 
 	// Create command
 	cmd := c.commandRun("npx", args...)
 	cmd.Dir = opts.WorkingDir
-	// Unset CLAUDECODE env to allow running inside Claude Code session.
-	cmd.Env = executor.BuildCommandEnv(opts.Env, map[string]string{"CLAUDECODE": ""})
+	// Unset QWEN env if needed (not strictly required, but analogous to Claude)
+	cmd.Env = executor.BuildCommandEnv(opts.Env, map[string]string{})
 
 	// Log the command being executed (mask the prompt in logs for brevity)
 	c.sendLog(executor.Log{Type: "command", Content: fmt.Sprintf("npx %s", strings.Join(args, " "))})
@@ -79,7 +79,7 @@ func (c *Client) Start(ctx context.Context, prompt string, opts executor.Options
 		defer c.Close()
 		defer ptmx.Close()
 
-		defer c.sendLog(executor.Log{Type: "done", Content: "Claude execution finished"})
+		defer c.sendLog(executor.Log{Type: "done", Content: "Qwen execution finished"})
 
 		scanner := bufio.NewScanner(ptmx)
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer for large JSON lines
@@ -306,7 +306,7 @@ func mustRawJSON(v any) json.RawMessage {
 	return data
 }
 
-// Factory creates Claude Code executor instances
+// Factory creates Qwen Code executor instances
 type Factory struct{}
 
 func NewFactory() *Factory {

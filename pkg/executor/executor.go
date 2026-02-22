@@ -16,6 +16,9 @@ type Executor interface {
 	// SendMessage sends a message to continue the conversation
 	SendMessage(ctx context.Context, message string) error
 
+	// RespondControl sends a response to a pending control/approval request.
+	RespondControl(ctx context.Context, response ControlResponse) error
+
 	// Wait waits for the execution to complete
 	Wait() error
 
@@ -47,6 +50,10 @@ type Options struct {
 	Model      string
 	Plan       bool
 	Env        map[string]string
+	// ResumeSessionID identifies the upstream executor session/conversation to resume.
+	ResumeSessionID string
+	// ResumePath is optional executor specific resume source path (for example Codex rollout file).
+	ResumePath string
 
 	// Claude Code specific
 	Approvals                  bool
@@ -56,6 +63,23 @@ type Options struct {
 	Sandbox              string
 	AskForApproval       string
 	ModelReasoningEffort string
+
+	// Shared: skip all permission/approval prompts and run autonomously.
+	// Used by Gemini (--yolo), Qwen (--yolo), Droid (--skip-permissions-unsafe).
+	Yolo bool
+
+	// Droid specific: autonomy level (normal, low, medium, high, skip-permissions-unsafe).
+	// When empty, Droid defaults to skip-permissions-unsafe if Yolo is true.
+	DroidAutonomy string
+
+	// Droid specific: reasoning effort (none, dynamic, off, low, medium, high).
+	DroidReasoningEffort string
+
+	// Copilot specific: allow all tools without prompting.
+	CopilotAllowAllTools bool
+
+	// Gemini / Qwen / Copilot: extra CLI args forwarded verbatim to the subprocess.
+	ExtraArgs []string
 }
 
 // Log represents a log entry from the executor
@@ -135,4 +159,15 @@ func (r *Registry) ShutdownAll() {
 	for _, ex := range sessions {
 		_ = ex.Close()
 	}
+}
+
+// Executors returns a list of names for all registered executors.
+func (r *Registry) Executors() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.factories))
+	for name := range r.factories {
+		names = append(names, name)
+	}
+	return names
 }

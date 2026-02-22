@@ -1,4 +1,4 @@
-package claude
+package qwen
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/supremeagent/executor/pkg/executor"
 )
 
-func TestClaudeClient(t *testing.T) {
+func TestQwenClient(t *testing.T) {
 	client := NewClient()
 	client.commandRun = mockCommand
 
@@ -39,7 +39,7 @@ func TestClaudeClient(t *testing.T) {
 	}
 }
 
-func TestClaudeClient_More(t *testing.T) {
+func TestQwenClient_More(t *testing.T) {
 	client := NewClient()
 	client.commandRun = mockCommand
 
@@ -105,7 +105,7 @@ func TestClaudeClient_More(t *testing.T) {
 	})
 }
 
-func TestClaudeClient_buildControlPayload(t *testing.T) {
+func TestQwenClient_buildControlPayload(t *testing.T) {
 	c := NewClient()
 
 	c.controls["req-deny"] = ControlRequestType{Subtype: "can_use_tool"}
@@ -160,7 +160,7 @@ func TestClaudeClient_buildControlPayload(t *testing.T) {
 	}
 }
 
-func TestClaudeClient_trackControlRequest(t *testing.T) {
+func TestQwenClient_trackControlRequest(t *testing.T) {
 	c := NewClient()
 	c.trackControlRequest(map[string]any{
 		"type":       "control_request",

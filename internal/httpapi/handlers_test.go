@@ -249,6 +249,32 @@ func TestHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("HandleContinue_ResumeUnavailable", func(t *testing.T) {
+		registry.Register(string(executor.ExecutorCodex), executor.FactoryFunc(func() (executor.Executor, error) {
+			return &mockExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}, nil
+		}))
+
+		reqBody, _ := json.Marshal(ExecuteRequest{Prompt: "resume me", Executor: executor.ExecutorCodex})
+		reqExec, _ := http.NewRequest(http.MethodPost, "/execute", bytes.NewBuffer(reqBody))
+		rrExec := httptest.NewRecorder()
+		handler.HandleExecute(rrExec, reqExec)
+		if rrExec.Code != http.StatusOK {
+			t.Fatalf("expected execute 200, got %d", rrExec.Code)
+		}
+		var executeResp ExecuteResponse
+		_ = json.Unmarshal(rrExec.Body.Bytes(), &executeResp)
+		time.Sleep(50 * time.Millisecond)
+
+		continueBody, _ := json.Marshal(ContinueRequest{Message: "continue"})
+		req, _ := http.NewRequest(http.MethodPost, "/continue/"+executeResp.SessionID, bytes.NewBuffer(continueBody))
+		req = mux.SetURLVars(req, map[string]string{"session_id": executeResp.SessionID})
+		rr := httptest.NewRecorder()
+		handler.HandleContinue(rr, req)
+		if rr.Code != http.StatusConflict {
+			t.Fatalf("expected 409 for resume unavailable, got %d", rr.Code)
+		}
+	})
+
 	t.Run("HandleInterrupt_NotFound", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, "/interrupt/not-found", nil)
 		req = mux.SetURLVars(req, map[string]string{"session_id": "not-found"})
@@ -330,12 +356,63 @@ func TestHandlers(t *testing.T) {
 			t.Fatalf("expected sessions payload with title, got: %s", body)
 		}
 	})
+
+	t.Run("HandleControl", func(t *testing.T) {
+		sessionID := "test-session-control"
+		capture := &mockExecutor{logs: make(chan executor.Log, 10), done: make(chan struct{})}
+		registry.Register("control_executor", executor.FactoryFunc(func() (executor.Executor, error) {
+			return capture, nil
+		}))
+		_, _ = registry.CreateSession(sessionID, "control_executor", executor.Options{})
+
+		reqBody, _ := json.Marshal(ControlResponse{
+			RequestID: "req-1",
+			Decision:  executor.ControlDecisionApprove,
+		})
+		req, _ := http.NewRequest(http.MethodPost, "/control/"+sessionID, bytes.NewBuffer(reqBody))
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+		handler.HandleControl(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", rr.Code)
+		}
+		if capture.lastControl.RequestID != "req-1" {
+			t.Fatalf("expected control response delivered, got %+v", capture.lastControl)
+		}
+	})
+
+	t.Run("HandleControl_InvalidDecision", func(t *testing.T) {
+		sessionID := "test-session-control-invalid"
+		_, _ = registry.CreateSession(sessionID, string(executor.ExecutorClaudeCode), executor.Options{})
+		reqBody := []byte(`{"request_id":"req-2","decision":"maybe"}`)
+		req, _ := http.NewRequest(http.MethodPost, "/control/"+sessionID, bytes.NewBuffer(reqBody))
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+		handler.HandleControl(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rr.Code)
+		}
+	})
+
+	t.Run("HandleControl_MissingRequestID", func(t *testing.T) {
+		sessionID := "test-session-control-missing"
+		_, _ = registry.CreateSession(sessionID, string(executor.ExecutorClaudeCode), executor.Options{})
+		reqBody := []byte(`{"decision":"approve"}`)
+		req, _ := http.NewRequest(http.MethodPost, "/control/"+sessionID, bytes.NewBuffer(reqBody))
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		rr := httptest.NewRecorder()
+		handler.HandleControl(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d", rr.Code)
+		}
+	})
 }
 
 type mockExecutor struct {
-	logs     chan executor.Log
-	done     chan struct{}
-	lastOpts executor.Options
+	logs        chan executor.Log
+	done        chan struct{}
+	lastOpts    executor.Options
+	lastControl executor.ControlResponse
 }
 
 func (m *mockExecutor) Start(ctx context.Context, prompt string, opts executor.Options) error {
@@ -349,10 +426,14 @@ func (m *mockExecutor) Start(ctx context.Context, prompt string, opts executor.O
 
 func (m *mockExecutor) Interrupt() error                                      { return nil }
 func (m *mockExecutor) SendMessage(ctx context.Context, message string) error { return nil }
-func (m *mockExecutor) Wait() error                                           { return nil }
-func (m *mockExecutor) Logs() <-chan executor.Log                             { return m.logs }
-func (m *mockExecutor) Done() <-chan struct{}                                 { return m.done }
-func (m *mockExecutor) Close() error                                          { return nil }
+func (m *mockExecutor) RespondControl(ctx context.Context, response executor.ControlResponse) error {
+	m.lastControl = response
+	return nil
+}
+func (m *mockExecutor) Wait() error               { return nil }
+func (m *mockExecutor) Logs() <-chan executor.Log { return m.logs }
+func (m *mockExecutor) Done() <-chan struct{}     { return m.done }
+func (m *mockExecutor) Close() error              { return nil }
 
 type mockErrorExecutor struct {
 	mockExecutor
