@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
@@ -10,16 +11,30 @@ import (
 
 	"github.com/mylxsw/asteria/log"
 	"github.com/supremeagent/executor/internal/httpapi"
+	"github.com/supremeagent/executor/internal/mcpapi"
 	"github.com/supremeagent/executor/pkg/sdk"
 )
 
 func main() {
 	addr := flag.String("addr", "0.0.0.0:8080", "Server address")
+	mcp := flag.Bool("mcp", false, "Run as MCP stdio server instead of HTTP server")
 	flag.Parse()
 
 	client := sdk.New()
+	defer client.Shutdown()
+
+	if *mcp {
+		runMCPServer(client)
+		return
+	}
+
 	handler := httpapi.NewHandler(client)
 	router := httpapi.NewRouter(handler)
+
+	// Register the MCP HTTP (Streamable HTTP) endpoint so remote clients can
+	// connect via the Model Context Protocol over HTTP.
+	mcpSrv := mcpapi.NewExecutorServer(client)
+	router.Handle("/mcp", mcpSrv.HTTPHandler()).Methods(http.MethodPost)
 
 	server := &http.Server{Addr: *addr, Handler: router}
 
@@ -36,6 +51,15 @@ func main() {
 	<-quit
 
 	log.Info("Shutting down server...")
-	client.Shutdown()
-	log.Info("Server stopped")
+}
+
+func runMCPServer(client *sdk.Client) {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	srv := mcpapi.NewExecutorServer(client)
+	if err := srv.Serve(ctx); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
+		os.Exit(1)
+	}
 }
