@@ -34,7 +34,7 @@ func main() {
 	// Register the MCP HTTP (Streamable HTTP) endpoint so remote clients can
 	// connect via the Model Context Protocol over HTTP.
 	mcpSrv := mcpapi.NewExecutorServer(client)
-	router.Handle("/mcp", mcpSrv.HTTPHandler()).Methods(http.MethodPost)
+	router.Handle("/mcp", httpapi.AuthMiddleware(mcpSrv.HTTPHandler())).Methods(http.MethodPost)
 
 	server := &http.Server{Addr: *addr, Handler: router}
 

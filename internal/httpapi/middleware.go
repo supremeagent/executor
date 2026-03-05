@@ -2,10 +2,36 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/mylxsw/asteria/log"
 )
+
+// AuthTokenEnvVar is the environment variable that holds the Bearer token.
+// When unset or empty, authentication is disabled.
+const AuthTokenEnvVar = "EXECUTOR_API_TOKEN"
+
+// AuthMiddleware checks the Bearer token when EXECUTOR_API_TOKEN is set.
+// If the env var is empty, all requests pass through unchanged.
+func AuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := os.Getenv(AuthTokenEnvVar)
+		if token == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") || strings.TrimPrefix(auth, "Bearer ") != token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 // LoggingMiddleware logs HTTP requests
 func LoggingMiddleware(next http.Handler) http.Handler {

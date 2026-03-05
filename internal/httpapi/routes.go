@@ -11,6 +11,7 @@ func NewRouter(handler *Handler) *mux.Router {
 	router := mux.NewRouter()
 	router.Use(LoggingMiddleware)
 	router.Use(RecoveryMiddleware)
+	router.Use(AuthMiddleware)
 
 	router.HandleFunc("/api/execute", handler.HandleExecute).Methods(http.MethodPost)
 	router.HandleFunc("/api/execute/{session_id}/continue", handler.HandleContinue).Methods(http.MethodPost)
